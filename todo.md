@@ -48,13 +48,15 @@
 - [ ] 编写 vitest 测试：models router CRUD + 健康检查
 - [x] 保存 checkpoint 并发布
 
-## Phase 2 — MCP 工具管理（待开发）
+## Phase 2 — MCP 工具管理（已完成）
 
-- [ ] MCP 自助接入向导
-- [ ] 能力定义（可调用函数注册）
-- [ ] 健康监控 + 响应时间
-- [ ] 调用日志（输入/输出/耗时）
-- [ ] 认证管理（API Key/OAuth）
+- [x] MCP 自助接入向导（4 步向导：基本信息 → 连接配置 → 认证方式 → 能力定义）
+- [x] 能力定义（可调用函数注册，支持 GET/POST/PUT/DELETE/PATCH）
+- [x] 健康监控 + 响应时间（实时健康检查 + 延迟显示）
+- [x] 调用日志（调用日志 Tab，显示最近 50 条记录）
+- [x] 认证管理（API Key / Bearer Token / Basic Auth / 无认证）
+- [x] 调用沙箱（选择能力 + JSON Payload + 实时响应展示）
+- [x] 统计卡片（工具总数 / 正常运行 / 异常工具 / 已停用）
 
 ## Phase 3 — Skill 技能管理（待开发）
 

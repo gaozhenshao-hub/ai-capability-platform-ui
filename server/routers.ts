@@ -4,6 +4,7 @@ import { systemRouter } from "./_core/systemRouter";
 import { publicProcedure, router } from "./_core/trpc";
 import { projectsRouter } from "./routers/projects";
 import { modelsRouter } from "./routers/models";
+import { mcpRouter } from "./routers/mcp";
 
 export const appRouter = router({
   system: systemRouter,
@@ -23,6 +24,9 @@ export const appRouter = router({
 
   // Phase 1.3 — LLM 模型管理
   models: modelsRouter,
+
+  // Phase 2 — MCP 工具管理
+  mcp: mcpRouter,
 });
 
 export type AppRouter = typeof appRouter;
