@@ -58,12 +58,19 @@
 - [x] 调用沙箱（选择能力 + JSON Payload + 实时响应展示）
 - [x] 统计卡片（工具总数 / 正常运行 / 异常工具 / 已停用）
 
-## Phase 3 — Skill 技能管理（待开发）
+## Phase 3 — Skill 技能管理（已完成）
 
-- [ ] Monaco Prompt 编辑器
-- [ ] 版本对比与回滚
-- [ ] 实时测试运行器
-- [ ] 采纳率统计
+- [x] Skill 列表页（搜索/状态/分类筛选）
+- [x] 创建/编辑 Skill 对话框（基本信息/Prompt/Schema 三标签页）
+- [x] Prompt 模板编辑器（System Prompt + 用户 Prompt + 变量占位符）
+- [x] 版本历史面板（查看/回滚）
+- [x] 实时测试运行器（输入 JSON → AI 输出 + Token 统计）
+- [x] 调用日志面板（来源/版本/耗时/Token）
+- [x] 采纳率统计（getStats 接口）
+- [x] 审计日志页面（tRPC 版，支持搜索/过滤/展开详情）
+- [x] skillsRouter 注册到 appRouter
+- [x] auditRouter 注册到 appRouter
+- [x] Vitest 测试 13 项全部通过
 
 ## Phase 4 — Agent 可视化编排（待开发）
 

@@ -5,6 +5,8 @@ import { publicProcedure, router } from "./_core/trpc";
 import { projectsRouter } from "./routers/projects";
 import { modelsRouter } from "./routers/models";
 import { mcpRouter } from "./routers/mcp";
+import { skillsRouter } from "./routers/skills";
+import { auditRouter } from "./routers/audit";
 
 export const appRouter = router({
   system: systemRouter,
@@ -27,6 +29,12 @@ export const appRouter = router({
 
   // Phase 2 — MCP 工具管理
   mcp: mcpRouter,
+
+  // Phase 3 — Skill 技能管理
+  skills: skillsRouter,
+
+  // 审计日志
+  audit: auditRouter,
 });
 
 export type AppRouter = typeof appRouter;
