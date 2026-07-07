@@ -149,3 +149,33 @@
 ### 5.5 测试
 - [x] knowledge.test.ts：CRUD + 搜索 + 审核流程（87项全部通过）
 - [x] 保存 checkpoint（e266d8c2）
+
+## Phase 6 — 平台内置 AI 助手（已完成）
+
+### 6.1 后端 assistantRouter
+- [x] assistantRouter：chat 接口（多轮对话 + 工具调用 + 最多 3 轮工具循环）
+- [x] assistantRouter：getAgentOptimizationTips（分析运行日志 + 给出优化建议）
+- [x] assistantRouter：recommendSkills（根据任务描述推荐 Skill 组合，JSON 结构化输出）
+- [x] 工具调用：list_skills / list_agents / get_agent_runs / search_knowledge / get_skill_stats
+- [x] 系统 Prompt：注入平台功能说明 + Agent 上下文（agentId 传入时）
+- [x] 修复 TypeScript 错误（workflowJson as any，content 类型处理）
+- [x] 注册 assistantRouter 到 routers.ts
+
+### 6.2 前端 AIPlatformAssistant 组件
+- [x] 右下角浮动按钮（Bot 图标，点击展开/收起）
+- [x] 聊天窗口：消息列表 + 打字指示器 + 输入框（Enter 发送，Shift+Enter 换行）
+- [x] 消息气泡：用户（蓝色右对齐）+ AI（深色左对齐）+ 时间戳
+- [x] Markdown 渲染（代码块/行内代码/粗体/标题/列表）
+- [x] 快捷操作按钮（推荐 Skill / 优化 Agent / 创建 Agent）
+- [x] 加载状态（三点跳动打字指示器）
+- [x] 清空对话按钮
+- [x] 未读消息计数角标
+
+### 6.3 集成
+- [x] App.tsx 全局挂载 AIPlatformAssistant（所有页面可用）
+- [x] AgentCanvas.tsx 上下文感知集成（传入 agentId + 节点数/连线数上下文）
+
+### 6.4 测试
+- [x] assistant.test.ts：13 项测试全部通过
+- [x] 全量测试 105 项全部通过（7 test files）
+- [x] TypeScript 0 错误

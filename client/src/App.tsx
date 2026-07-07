@@ -15,6 +15,7 @@ import Projects from "./pages/Projects";
 import Migration from "./pages/Migration";
 import NotFound from "./pages/NotFound";
 import AppLayout from "./components/AppLayout";
+import { AIPlatformAssistant } from "./components/AIPlatformAssistant";
 
 function Router() {
   return (
@@ -43,6 +44,8 @@ export default function App() {
         <TooltipProvider>
           <Toaster />
           <Router />
+          {/* Phase 6 — 全局 AI 助手浮动组件 */}
+          <AIPlatformAssistant />
         </TooltipProvider>
       </ThemeProvider>
     </ErrorBoundary>

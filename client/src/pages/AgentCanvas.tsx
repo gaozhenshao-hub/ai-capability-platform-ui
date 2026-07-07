@@ -29,6 +29,7 @@ import { Textarea } from "@/components/ui/textarea";
 import {
   Select, SelectContent, SelectItem, SelectTrigger, SelectValue
 } from "@/components/ui/select";
+import { AIPlatformAssistant } from "@/components/AIPlatformAssistant";
 
 // ─── Node type definitions ────────────────────────────────────────────────────
 export type AgentNodeType =
@@ -924,6 +925,11 @@ export default function AgentCanvas() {
           </div>
         )}
       </div>
+      {/* Phase 6 — Agent 上下文感知 AI 助手 */}
+      <AIPlatformAssistant
+        agentId={agentId || undefined}
+        context={agent ? `当前编辑 Agent：${agent.name}，节点数：${nodes.length}，连线数：${edges.length}` : undefined}
+      />
     </div>
   );
 }

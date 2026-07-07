@@ -11,6 +11,7 @@ import { agentsRouter } from "./routers/agents";
 import { knowledgeRouter } from "./routers/knowledge";
 import { dashboardRouter } from "./routers/dashboard";
 import { migrationRouter } from "./routers/migration";
+import { assistantRouter } from "./routers/assistant";
 
 export const appRouter = router({
   system: systemRouter,
@@ -51,6 +52,9 @@ export const appRouter = router({
 
   // Phase 5 — 跨系统迁移
   migration: migrationRouter,
+
+  // Phase 6 — 平台内置 AI 助手
+  assistant: assistantRouter,
 });
 
 export type AppRouter = typeof appRouter;
