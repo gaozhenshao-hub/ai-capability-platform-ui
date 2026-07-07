@@ -8,6 +8,9 @@ import { mcpRouter } from "./routers/mcp";
 import { skillsRouter } from "./routers/skills";
 import { auditRouter } from "./routers/audit";
 import { agentsRouter } from "./routers/agents";
+import { knowledgeRouter } from "./routers/knowledge";
+import { dashboardRouter } from "./routers/dashboard";
+import { migrationRouter } from "./routers/migration";
 
 export const appRouter = router({
   system: systemRouter,
@@ -39,6 +42,15 @@ export const appRouter = router({
 
   // Phase 4 — Agent 可视化编排
   agents: agentsRouter,
+
+  // Phase 5 — 知识库管理
+  knowledge: knowledgeRouter,
+
+  // Phase 5 — 监控仪表盘
+  dashboard: dashboardRouter,
+
+  // Phase 5 — 跨系统迁移
+  migration: migrationRouter,
 });
 
 export type AppRouter = typeof appRouter;

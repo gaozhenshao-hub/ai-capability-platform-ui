@@ -4,6 +4,7 @@ import { trpc } from "@/lib/trpc";
 import { cn } from "@/lib/utils";
 import {
   Activity,
+  ArrowLeftRight,
   BookOpen,
   Bot,
   Brain,
@@ -30,6 +31,7 @@ const navItems = [
   { icon: Plug, label: "MCP 连接器", path: "/mcp" },
   { icon: BookOpen, label: "知识库", path: "/knowledge" },
   { icon: ScrollText, label: "审计日志", path: "/audit" },
+  { icon: ArrowLeftRight, label: "数据迁移", path: "/migration" },
 ];
 
 export default function AppLayout({ children }: { children: React.ReactNode }) {
