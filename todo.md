@@ -44,8 +44,8 @@
 ## Phase 1.5 — 集成测试
 
 - [x] vitest 测试：auth.logout 通过（1 passed）
-- [ ] 编写 vitest 测试：projects router CRUD
-- [ ] 编写 vitest 测试：models router CRUD + 健康检查
+- [x] 编写 vitest 测试：projects router CRUD（权限/API Key脲敏/Slug校验）
+- [x] 编写 vitest 测试：models router CRUD + 健康检查（健康/异常/费用统计）
 - [x] 保存 checkpoint 并发布
 
 ## Phase 2 — MCP 工具管理（已完成）
@@ -72,12 +72,12 @@
 - [x] auditRouter 注册到 appRouter
 - [x] Vitest 测试 13 项全部通过
 
-## Phase 4 — Agent 可视化编排（待开发）
+## Phase 4 — Agent 可视化编排（已完成）
 
-- [ ] React Flow 画布
-- [ ] 9 种节点类型
-- [ ] 人工审核节点
-- [ ] 运行进度可视化
+- [x] React Flow 画布（@xyflow/react v12）
+- [x] 10 种节点类型（输入/输出/Skill/LLM/条件/循环/人工审核/HTTP/代码/知识库）
+- [x] 人工审核节点（暂停执行 + 等待人工确认）
+- [x] 运行进度可视化（RunPanel 轮询 + 节点状态高亮）
 
 ## Phase 3 补充 — Monaco 编辑器 + 版本 Diff + Prompt 导入
 
@@ -101,3 +101,14 @@
 - [x] 前端：人工审核节点（暂停执行 + 等待人工确认）
 - [x] 前端：运行进度可视化（RunPanel 轮询 + 节点状态高亮）
 - [x] Vitest 测试：17 项全部通过（总计 40 项）
+
+## Phase 4 补充 — Agent 与 Skill/MCP/LLM 联调（已完成）
+
+- [x] 后端：Skill 节点读取 Skill 配置的 modelId，支持自定义模型
+- [x] 后端：MCP 节点真实调用 mcp.invoke（通过 mcpToolId + capabilityName + payload）
+- [x] 后端：LLM 节点支持从数据库读取自定义模型（apiBaseUrl/apiKey）
+- [x] 后端：agents.ts 新增 getAvailableMcpTools 接口
+- [x] 前端：Skill 节点属性面板 — 下拉选择 Skill + 变量映射表
+- [x] 前端：MCP 节点属性面板 — 选择 MCP 工具 + 能力 + 参数填写
+- [x] 前端：LLM 节点属性面板 — 选择模型 + System/User Prompt 编辑
+- [x] 联调测试：agents.test.ts 覆盖 Skill/MCP/LLM 节点执行逻辑

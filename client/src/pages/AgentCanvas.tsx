@@ -18,10 +18,9 @@ import {
   Panel,
 } from "@xyflow/react";
 import "@xyflow/react/dist/style.css";
-import {
-  ArrowLeft, Save, Play, Bot, GitBranch, Cpu, Globe, Code2, BookOpen,
+import { ArrowLeft, Save, Play, Bot, GitBranch, Cpu, Globe, Code2, BookOpen,
   CheckSquare, ChevronRight, Loader2, AlertCircle, RotateCcw, X,
-  Settings, Layers, Zap, RefreshCw, Eye
+  Settings, Layers, Zap, RefreshCw, Eye, Plug
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -33,7 +32,7 @@ import {
 
 // ─── Node type definitions ────────────────────────────────────────────────────
 export type AgentNodeType =
-  | "input" | "output" | "skill" | "llm" | "condition"
+  | "input" | "output" | "skill" | "llm" | "mcp" | "condition"
   | "loop" | "human_review" | "http" | "code" | "knowledge";
 
 export interface AgentNodeData extends Record<string, unknown> {
@@ -60,6 +59,7 @@ const NODE_PALETTE: Array<{
   { type: "human_review", label: "人工审核",   icon: CheckSquare,  color: "text-rose-400",    bgColor: "bg-rose-500/20 border-rose-500/40",      description: "暂停等待人工确认" },
   { type: "http",         label: "HTTP 请求",  icon: Globe,        color: "text-emerald-400", bgColor: "bg-emerald-500/20 border-emerald-500/40",description: "调用外部 API" },
   { type: "code",         label: "代码节点",   icon: Code2,        color: "text-purple-400",  bgColor: "bg-purple-500/20 border-purple-500/40",  description: "执行自定义代码逻辑" },
+  { type: "mcp",          label: "MCP 工具",   icon: Plug,         color: "text-pink-400",    bgColor: "bg-pink-500/20 border-pink-500/40",      description: "调用外部 MCP 工具服务" },
   { type: "knowledge",    label: "知识库",     icon: BookOpen,     color: "text-teal-400",    bgColor: "bg-teal-500/20 border-teal-500/40",      description: "查询知识库内容" },
   { type: "output",       label: "输出节点",   icon: ChevronRight, color: "text-slate-400",   bgColor: "bg-slate-500/20 border-slate-500/40",    description: "工作流终止，收集输出" },
 ];
@@ -69,6 +69,7 @@ const NODE_COLOR_MAP: Record<AgentNodeType, string> = {
   output:       "#475569",
   skill:        "#2563eb",
   llm:          "#0891b2",
+  mcp:          "#db2777",
   condition:    "#d97706",
   loop:         "#ea580c",
   human_review: "#e11d48",
@@ -161,12 +162,14 @@ function NodePropertyPanel({
   onClose,
   availableSkills,
   availableModels,
+  availableMcpTools,
 }: {
   node: Node<AgentNodeData>;
   onUpdate: (id: string, data: Partial<AgentNodeData>) => void;
   onClose: () => void;
   availableSkills: Array<{ id: number; name: string; slug: string; description?: string | null }>;
   availableModels: Array<{ id: number; name: string; provider: string; modelId: string }>;
+  availableMcpTools: Array<{ id: number; name: string; slug: string; description?: string | null; capabilities: Array<{ name: string; description?: string; method?: string; path?: string }> }>;
 }) {
   const [label, setLabel] = useState(node.data.label);
   const [config, setConfig] = useState<Record<string, unknown>>(node.data.config ?? {});
@@ -368,6 +371,69 @@ function NodePropertyPanel({
             </div>
           </div>
         )}
+
+        {/* MCP node config */}
+        {node.data.nodeType === "mcp" && (() => {
+          const selectedTool = availableMcpTools.find(t => t.id === Number(config.mcpToolId));
+          return (
+            <div className="space-y-3">
+              <div className="space-y-1.5">
+                <Label className="text-slate-300 text-xs">MCP 工具</Label>
+                <Select
+                  value={String(config.mcpToolId ?? "")}
+                  onValueChange={v => {
+                    setConfigField("mcpToolId", Number(v));
+                    setConfigField("capabilityName", "");
+                  }}
+                >
+                  <SelectTrigger className="h-8 text-xs bg-[#0a0d14] border-white/10 text-slate-300">
+                    <SelectValue placeholder="选择 MCP 工具..." />
+                  </SelectTrigger>
+                  <SelectContent className="bg-[#0d1117] border-white/10">
+                    {availableMcpTools.map(t => (
+                      <SelectItem key={t.id} value={String(t.id)} className="text-slate-300 text-xs">
+                        {t.name} <span className="text-slate-600 ml-1">{t.slug}</span>
+                      </SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
+              </div>
+              {selectedTool && (
+                <div className="space-y-1.5">
+                  <Label className="text-slate-300 text-xs">能力 (Capability)</Label>
+                  <Select
+                    value={String(config.capabilityName ?? "")}
+                    onValueChange={v => setConfigField("capabilityName", v)}
+                  >
+                    <SelectTrigger className="h-8 text-xs bg-[#0a0d14] border-white/10 text-slate-300">
+                      <SelectValue placeholder="选择能力..." />
+                    </SelectTrigger>
+                    <SelectContent className="bg-[#0d1117] border-white/10">
+                      {selectedTool.capabilities.map(cap => (
+                        <SelectItem key={cap.name} value={cap.name} className="text-slate-300 text-xs">
+                          <span className="font-mono">{cap.name}</span>
+                          {cap.description && <span className="text-slate-600 ml-1 text-[10px]">{cap.description}</span>}
+                        </SelectItem>
+                      ))}
+                    </SelectContent>
+                  </Select>
+                </div>
+              )}
+              <div className="space-y-1.5">
+                <Label className="text-slate-300 text-xs">请求参数 (JSON)</Label>
+                <Textarea
+                  value={typeof config.payload === "string" ? config.payload : JSON.stringify(config.payload ?? {}, null, 2)}
+                  onChange={e => setConfigField("payload", e.target.value)}
+                  rows={5} className="font-mono text-xs bg-[#0a0d14] border-white/10 text-slate-200 resize-y"
+                  placeholder='{"query": "{{input}}"}'
+                />
+              </div>
+              <div className="rounded-lg border border-pink-500/20 bg-pink-500/5 p-2.5 text-[10px] text-pink-400">
+                支持 {"{{variable}}"} 占位符从上下文读取变量
+              </div>
+            </div>
+          );
+        })()}
 
         {/* Input/Output node — minimal config */}
         {(node.data.nodeType === "input" || node.data.nodeType === "output") && (
@@ -611,6 +677,7 @@ export default function AgentCanvas() {
   const { data: agent, isLoading } = trpc.agents.get.useQuery({ id: agentId }, { enabled: !!agentId });
   const { data: availableSkills } = trpc.agents.getAvailableSkills.useQuery();
   const { data: availableModels } = trpc.agents.getAvailableModels.useQuery();
+  const { data: availableMcpTools } = trpc.agents.getAvailableMcpTools.useQuery();
 
   const [nodes, setNodes, onNodesChange] = useNodesState<Node<AgentNodeData>>([]);
   const [edges, setEdges, onEdgesChange] = useEdgesState<Edge>([]);
@@ -851,6 +918,7 @@ export default function AgentCanvas() {
                 onClose={() => setSelectedNode(null)}
                 availableSkills={availableSkills ?? []}
                 availableModels={availableModels ?? []}
+                availableMcpTools={availableMcpTools ?? []}
               />
             ) : null}
           </div>

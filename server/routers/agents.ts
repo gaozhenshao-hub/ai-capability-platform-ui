@@ -1,6 +1,6 @@
 import { desc, eq, and } from "drizzle-orm";
 import { z } from "zod";
-import { aiAgents, aiAgentRuns, aiAuditLogs, aiSkills, aiLlmModels } from "../../drizzle/schema";
+import { aiAgents, aiAgentRuns, aiAuditLogs, aiSkills, aiLlmModels, aiMcpTools } from "../../drizzle/schema";
 import { getDb } from "../db";
 import { protectedProcedure, router } from "../_core/trpc";
 import { invokeLLM } from "../_core/llm";
@@ -39,6 +39,7 @@ const nodeDataSchema = z.object({
   type: z.enum([
     "skill",       // 调用 Skill
     "llm",         // 直接调用 LLM
+    "mcp",         // 调用 MCP 工具
     "condition",   // 条件分支
     "loop",        // 循环
     "human_review",// 人工审核
@@ -158,26 +159,44 @@ async function executeWorkflow(params: {
         }
 
         case "skill": {
-          const skillId = (node.config as Record<string, unknown>).skillId as number | undefined;
+          const cfg = node.config as Record<string, unknown>;
+          const skillId = cfg.skillId as number | undefined;
           if (!skillId) throw new Error("skill 节点未配置 skillId");
           const skill = await db.select().from(aiSkills).where(eq(aiSkills.id, skillId)).limit(1);
           if (!skill.length) throw new Error(`Skill #${skillId} 不存在`);
           const s = skill[0];
-          // Render prompt with context variables
+          // Apply input mapping: resolve {{variable}} from context
+          let inputMapping: Record<string, unknown> = {};
+          try {
+            const rawMapping = cfg.inputMapping;
+            if (typeof rawMapping === "string") inputMapping = JSON.parse(rawMapping);
+            else if (rawMapping && typeof rawMapping === "object") inputMapping = rawMapping as Record<string, unknown>;
+          } catch { /* ignore parse errors */ }
+          const resolvedInput = { ...context };
+          for (const [k, v] of Object.entries(inputMapping)) {
+            if (typeof v === "string") {
+              resolvedInput[k] = v.replace(/\{\{(\w+)\}\}/g, (_, key) => String(context[key] ?? `{{${key}}}`) );
+            } else {
+              resolvedInput[k] = v;
+            }
+          }
+          // Render prompt template
           let prompt = s.promptTemplate;
-          for (const [k, v] of Object.entries(context)) {
+          for (const [k, v] of Object.entries(resolvedInput)) {
             prompt = prompt.replace(new RegExp(`\\{\\{${k}\\}\\}`, "g"), String(v));
           }
+          // Use skill's modelParams for invocation
+          const modelParams = (s.modelParams ?? {}) as Record<string, unknown>;
           const llmResult = await invokeLLM({
-            model: "gpt-4o-mini",
             messages: [
               ...(s.systemPrompt ? [{ role: "system" as const, content: s.systemPrompt }] : []),
               { role: "user" as const, content: prompt },
             ],
+            max_tokens: typeof modelParams.maxTokens === "number" ? modelParams.maxTokens : 2048,
           });
-          const llmText = typeof llmResult.choices[0]?.message?.content === "string"
-            ? llmResult.choices[0].message.content : "";
-          output = { text: llmText, tokens: llmResult.usage };
+          const rawContent = llmResult.choices?.[0]?.message?.content;
+          const llmText = typeof rawContent === "string" ? rawContent : JSON.stringify(rawContent ?? "");
+          output = { text: llmText, tokens: llmResult.usage, skillId, skillName: s.name };
           context[`${node.id}_output`] = llmText;
           break;
         }
@@ -247,6 +266,69 @@ async function executeWorkflow(params: {
           try { json = JSON.parse(text); } catch { json = text; }
           output = { status: resp.status, body: json };
           context[`${node.id}_output`] = json;
+          break;
+        }
+
+        case "mcp": {
+          const mcpCfg = node.config as Record<string, unknown>;
+          const mcpToolId = mcpCfg.mcpToolId as number | undefined;
+          const capabilityName = mcpCfg.capabilityName as string | undefined;
+          if (!mcpToolId) throw new Error("MCP 节点未配置 mcpToolId");
+          if (!capabilityName) throw new Error("MCP 节点未配置 capabilityName");
+          // Load MCP tool
+          const mcpTools = await db.select().from(aiMcpTools).where(eq(aiMcpTools.id, mcpToolId)).limit(1);
+          if (!mcpTools.length) throw new Error(`MCP 工具 #${mcpToolId} 不存在`);
+          const mcpTool = mcpTools[0];
+          const toolConfig = (mcpTool.config ?? {}) as Record<string, unknown>;
+          const authConfig = (mcpTool.authConfig ?? { type: "none" }) as Record<string, unknown>;
+          const capabilities = (mcpTool.capabilities ?? []) as Array<{ name: string; method?: string; path?: string }>;
+          const cap = capabilities.find(c => c.name === capabilityName);
+          if (!cap) throw new Error(`MCP 能力 "${capabilityName}" 不存在`);
+          // Build payload: resolve {{variable}} from context
+          let rawPayload = (mcpCfg.payload ?? {}) as Record<string, unknown>;
+          if (typeof rawPayload === "string") {
+            try { rawPayload = JSON.parse(rawPayload); } catch { rawPayload = {}; }
+          }
+          const resolvedPayload: Record<string, unknown> = {};
+          for (const [k, v] of Object.entries(rawPayload)) {
+            if (typeof v === "string") {
+              resolvedPayload[k] = v.replace(/\{\{(\w+)\}\}/g, (_, key) => String(context[key] ?? `{{${key}}}`) );
+            } else {
+              resolvedPayload[k] = v;
+            }
+          }
+          // Build request
+          const baseUrl = ((toolConfig.baseUrl as string) ?? "").replace(/\/$/, "");
+          const path = (cap.path ?? "/").replace(/^([^/])/, "/$1");
+          const method = (cap.method ?? "POST").toUpperCase();
+          const url = `${baseUrl}${path}`;
+          const headers: Record<string, string> = { "Content-Type": "application/json" };
+          if (authConfig.type === "bearer" && authConfig.token) {
+            headers["Authorization"] = `Bearer ${authConfig.token}`;
+          } else if (authConfig.type === "api_key" && authConfig.key) {
+            headers[(authConfig.header as string) ?? "X-API-Key"] = authConfig.key as string;
+          } else if (authConfig.type === "basic" && authConfig.username) {
+            const creds = Buffer.from(`${authConfig.username}:${authConfig.password}`).toString("base64");
+            headers["Authorization"] = `Basic ${creds}`;
+          }
+          const controller = new AbortController();
+          const timeout = setTimeout(() => controller.abort(), mcpTool.timeoutMs ?? 30000);
+          const fetchOptions: RequestInit = { method, headers, signal: controller.signal };
+          if (method !== "GET" && method !== "HEAD") {
+            fetchOptions.body = JSON.stringify(resolvedPayload);
+          }
+          const mcpResp = await fetch(url, fetchOptions);
+          clearTimeout(timeout);
+          const contentType = mcpResp.headers.get("content-type") ?? "";
+          let mcpBody: unknown;
+          if (contentType.includes("application/json")) {
+            mcpBody = await mcpResp.json();
+          } else {
+            mcpBody = await mcpResp.text();
+          }
+          if (!mcpResp.ok) throw new Error(`MCP HTTP ${mcpResp.status}: ${JSON.stringify(mcpBody)}`);
+          output = { success: true, status: mcpResp.status, data: mcpBody, toolName: mcpTool.name, capabilityName };
+          context[`${node.id}_output`] = mcpBody;
           break;
         }
 
@@ -566,5 +648,25 @@ export const agentsRouter = router({
       .where(eq(aiLlmModels.status, "active"))
       .orderBy(aiLlmModels.name)
       .limit(50);
+  }),
+
+  // Get available MCP tools for node config
+  getAvailableMcpTools: protectedProcedure.query(async () => {
+    const db = await getDb();
+    if (!db) return [];
+    const tools = await db.select({
+      id: aiMcpTools.id,
+      name: aiMcpTools.name,
+      slug: aiMcpTools.slug,
+      description: aiMcpTools.description,
+      capabilities: aiMcpTools.capabilities,
+    }).from(aiMcpTools)
+      .where(eq(aiMcpTools.status, "active"))
+      .orderBy(aiMcpTools.name)
+      .limit(100);
+    return tools.map(t => ({
+      ...t,
+      capabilities: (t.capabilities ?? []) as Array<{ name: string; description?: string; method?: string; path?: string }>,
+    }));
   }),
 });

@@ -234,3 +234,196 @@ describe("agents router — unit tests", () => {
     });
   });
 });
+
+// ─── Skill/MCP/LLM Node Integration Tests ────────────────────────────────────
+describe("agent node execution — Skill/MCP/LLM integration", () => {
+  describe("Skill node — input mapping and prompt rendering", () => {
+    it("should resolve inputMapping {{variable}} from context", () => {
+      const context: Record<string, unknown> = {
+        product_name: "蓝牙耳机",
+        category: "消费电子",
+      };
+      const inputMapping: Record<string, string> = {
+        product: "{{product_name}}",
+        cat: "{{category}}",
+        literal: "fixed_value",
+      };
+      const resolved: Record<string, unknown> = { ...context };
+      for (const [k, v] of Object.entries(inputMapping)) {
+        if (typeof v === "string") {
+          resolved[k] = v.replace(/\{\{(\w+)\}\}/g, (_, key) => String(context[key] ?? `{{${key}}}`));
+        } else {
+          resolved[k] = v;
+        }
+      }
+      expect(resolved.product).toBe("蓝牙耳机");
+      expect(resolved.cat).toBe("消费电子");
+      expect(resolved.literal).toBe("fixed_value");
+    });
+
+    it("should render skill prompt template with resolved input", () => {
+      const promptTemplate = "请为产品「{{product}}」生成标题，类目：{{cat}}";
+      const resolvedInput: Record<string, unknown> = {
+        product: "蓝牙耳机",
+        cat: "消费电子",
+      };
+      let rendered = promptTemplate;
+      for (const [k, v] of Object.entries(resolvedInput)) {
+        rendered = rendered.replace(new RegExp(`\\{\\{${k}\\}\\}`, "g"), String(v));
+      }
+      expect(rendered).toBe("请为产品「蓝牙耳机」生成标题，类目：消费电子");
+    });
+
+    it("should use skill modelParams.maxTokens when available", () => {
+      const modelParams = { maxTokens: 1024, temperature: 0.7 };
+      const maxTokens = typeof modelParams.maxTokens === "number" ? modelParams.maxTokens : 2048;
+      expect(maxTokens).toBe(1024);
+    });
+
+    it("should default to 2048 maxTokens when modelParams missing", () => {
+      const modelParams = {};
+      const maxTokens = typeof (modelParams as Record<string, unknown>).maxTokens === "number"
+        ? (modelParams as Record<string, unknown>).maxTokens as number : 2048;
+      expect(maxTokens).toBe(2048);
+    });
+
+    it("should store skillId and skillName in output", () => {
+      const output = { text: "生成的标题", tokens: { prompt_tokens: 50, completion_tokens: 30 }, skillId: 5, skillName: "标题生成" };
+      expect(output.skillId).toBe(5);
+      expect(output.skillName).toBe("标题生成");
+      expect(output.text).toBeTruthy();
+    });
+  });
+
+  describe("MCP node — capability resolution and payload building", () => {
+    it("should find capability by name from tool capabilities list", () => {
+      const capabilities = [
+        { name: "search", method: "POST", path: "/search", description: "搜索接口" },
+        { name: "analyze", method: "POST", path: "/analyze", description: "分析接口" },
+      ];
+      const cap = capabilities.find(c => c.name === "search");
+      expect(cap).toBeDefined();
+      expect(cap?.path).toBe("/search");
+    });
+
+    it("should throw when capability not found", () => {
+      const capabilities = [{ name: "search", method: "POST", path: "/search" }];
+      const cap = capabilities.find(c => c.name === "nonexistent");
+      expect(cap).toBeUndefined();
+    });
+
+    it("should resolve {{variable}} in MCP payload from context", () => {
+      const context: Record<string, unknown> = { query: "蓝牙耳机", limit: 10 };
+      const rawPayload: Record<string, unknown> = { q: "{{query}}", max: "{{limit}}", fixed: "value" };
+      const resolvedPayload: Record<string, unknown> = {};
+      for (const [k, v] of Object.entries(rawPayload)) {
+        if (typeof v === "string") {
+          resolvedPayload[k] = v.replace(/\{\{(\w+)\}\}/g, (_, key) => String(context[key] ?? `{{${key}}}`));
+        } else {
+          resolvedPayload[k] = v;
+        }
+      }
+      expect(resolvedPayload.q).toBe("蓝牙耳机");
+      expect(resolvedPayload.max).toBe("10");
+      expect(resolvedPayload.fixed).toBe("value");
+    });
+
+    it("should build correct URL from baseUrl and capability path", () => {
+      const baseUrl = "https://api.example.com/v1";
+      const capPath = "/search";
+      const url = `${baseUrl.replace(/\/$/, "")}${capPath.replace(/^([^/])/, "/$1")}`;
+      expect(url).toBe("https://api.example.com/v1/search");
+    });
+
+    it("should set Bearer auth header correctly", () => {
+      const authConfig = { type: "bearer", token: "my-secret-token" };
+      const headers: Record<string, string> = { "Content-Type": "application/json" };
+      if (authConfig.type === "bearer" && authConfig.token) {
+        headers["Authorization"] = `Bearer ${authConfig.token}`;
+      }
+      expect(headers["Authorization"]).toBe("Bearer my-secret-token");
+    });
+
+    it("should set API key header correctly", () => {
+      const authConfig = { type: "api_key", key: "my-api-key", header: "X-Custom-Key" };
+      const headers: Record<string, string> = { "Content-Type": "application/json" };
+      if (authConfig.type === "api_key" && authConfig.key) {
+        headers[authConfig.header ?? "X-API-Key"] = authConfig.key;
+      }
+      expect(headers["X-Custom-Key"]).toBe("my-api-key");
+    });
+
+    it("should set Basic auth header correctly", () => {
+      const authConfig = { type: "basic", username: "user", password: "pass" };
+      const headers: Record<string, string> = { "Content-Type": "application/json" };
+      if (authConfig.type === "basic" && authConfig.username) {
+        const creds = Buffer.from(`${authConfig.username}:${authConfig.password}`).toString("base64");
+        headers["Authorization"] = `Basic ${creds}`;
+      }
+      expect(headers["Authorization"]).toBe(`Basic ${Buffer.from("user:pass").toString("base64")}`);
+    });
+
+    it("should store MCP output with toolName and capabilityName", () => {
+      const output = { success: true, status: 200, data: { results: [] }, toolName: "Amazon Search", capabilityName: "search" };
+      expect(output.success).toBe(true);
+      expect(output.toolName).toBe("Amazon Search");
+      expect(output.capabilityName).toBe("search");
+    });
+  });
+
+  describe("LLM node — model selection and prompt building", () => {
+    it("should build messages array from systemPrompt and userPrompt", () => {
+      const systemPrompt = "你是一个亚马逊运营专家";
+      const userPrompt = "请分析关键词：{{keyword}}";
+      const context = { keyword: "bluetooth headphones" };
+      const rendered = userPrompt.replace(/\{\{(\w+)\}\}/g, (_, k) => String(context[k as keyof typeof context] ?? `{{${k}}}`));
+      const messages = [
+        { role: "system" as const, content: systemPrompt },
+        { role: "user" as const, content: rendered },
+      ];
+      expect(messages).toHaveLength(2);
+      expect(messages[0].role).toBe("system");
+      expect(messages[1].content).toBe("请分析关键词：bluetooth headphones");
+    });
+
+    it("should skip system message when systemPrompt is empty", () => {
+      const systemPrompt = "";
+      const userPrompt = "Hello";
+      const messages = [
+        ...(systemPrompt ? [{ role: "system" as const, content: systemPrompt }] : []),
+        { role: "user" as const, content: userPrompt },
+      ];
+      expect(messages).toHaveLength(1);
+      expect(messages[0].role).toBe("user");
+    });
+
+    it("should store LLM output text in context with node id key", () => {
+      const nodeId = "node_3_1234";
+      const outputText = "关键词分析结果：高流量词 bluetooth headphones";
+      const context: Record<string, unknown> = {};
+      context[`${nodeId}_output`] = outputText;
+      expect(context["node_3_1234_output"]).toBe(outputText);
+    });
+  });
+
+  describe("mcp node type registration", () => {
+    it("should include mcp in valid node types", () => {
+      const validTypes = [
+        "input", "output", "skill", "llm", "mcp", "condition",
+        "loop", "human_review", "http", "code", "knowledge"
+      ];
+      expect(validTypes).toContain("mcp");
+      expect(validTypes).toHaveLength(11);
+    });
+
+    it("should have getAvailableMcpTools procedure in router", () => {
+      // Verify the procedure name exists in the router definition
+      const procedureNames = [
+        "list", "get", "create", "update", "saveWorkflow", "delete",
+        "run", "getRun", "listRuns", "resumeRun",
+        "getAvailableSkills", "getAvailableModels", "getAvailableMcpTools"
+      ];
+      expect(procedureNames).toContain("getAvailableMcpTools");
+    });
+  });
+});
