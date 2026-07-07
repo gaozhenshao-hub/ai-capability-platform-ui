@@ -87,3 +87,17 @@
 - [x] 后端 skills.diffVersions 接口（对比两个版本的 systemPrompt/userPromptTemplate 差异）
 - [x] 前端版本 diff 对比视图（左右双栏 diff，高亮增删行）
 - [x] Prompt 批量导入功能（从 JSON 导入 Skill 列表，支持预览确认后批量写入）
+
+## Phase 4 — Agent 可视化编排（开发中）
+
+- [x] 安装 @xyflow/react（React Flow v12）依赖
+- [x] 数据库：ai_agents 表（workflowJson）+ ai_agent_runs 表（运行日志）已存在
+- [x] 后端：agentsRouter（CRUD + 运行 + 步骤查询 + resumeRun）
+- [x] 前端：Agent 列表页（搜索/状态/新建/编辑/删除）
+- [x] 前端：Agent 画布页（三栏布局：节点面板 + React Flow 画布 + 属性面板）
+- [x] 前端：10 种节点类型（输入/输出/Skill/LLM/条件/循环/人工审核/HTTP/代码/知识库）
+- [x] 前端：节点拖拽到画布 + 自动连线（smoothstep）
+- [x] 前端：节点属性编辑面板（点击节点弹出配置）
+- [x] 前端：人工审核节点（暂停执行 + 等待人工确认）
+- [x] 前端：运行进度可视化（RunPanel 轮询 + 节点状态高亮）
+- [x] Vitest 测试：17 项全部通过（总计 40 项）

@@ -7,6 +7,7 @@ import { modelsRouter } from "./routers/models";
 import { mcpRouter } from "./routers/mcp";
 import { skillsRouter } from "./routers/skills";
 import { auditRouter } from "./routers/audit";
+import { agentsRouter } from "./routers/agents";
 
 export const appRouter = router({
   system: systemRouter,
@@ -35,6 +36,9 @@ export const appRouter = router({
 
   // 审计日志
   audit: auditRouter,
+
+  // Phase 4 — Agent 可视化编排
+  agents: agentsRouter,
 });
 
 export type AppRouter = typeof appRouter;

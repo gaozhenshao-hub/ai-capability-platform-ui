@@ -6,6 +6,7 @@ import { ThemeProvider } from "./contexts/ThemeContext";
 import Dashboard from "./pages/Dashboard";
 import Skills from "./pages/Skills";
 import Agents from "./pages/Agents";
+import AgentCanvas from "./pages/AgentCanvas";
 import Models from "./pages/Models";
 import McpPage from "./pages/Mcp";
 import Knowledge from "./pages/Knowledge";
@@ -23,6 +24,7 @@ function Router() {
         <Route path="/models"    component={Models} />
         <Route path="/skills"    component={Skills} />
         <Route path="/agents"    component={Agents} />
+        <Route path="/agents/:id" component={AgentCanvas} />
         <Route path="/mcp"       component={McpPage} />
         <Route path="/knowledge" component={Knowledge} />
         <Route path="/audit"     component={Audit} />
