@@ -402,3 +402,142 @@ describe("skills.getAvailableModels", () => {
     expect(result[0].name).toBe("GPT-4");
   });
 });
+
+// ─── runByApiKey Tests ──────────────────────────────────────────────────────────
+describe("skills.runByApiKey", () => {
+  const MOCK_API_KEY = "test-skill-api-key-32chars-xxxxxxxx";
+
+  beforeEach(async () => {
+    vi.resetAllMocks();
+    process.env.SKILL_API_KEY = MOCK_API_KEY;
+
+    // Default: insert succeeds
+    mockInsert.mockReturnValue({
+      values: vi.fn().mockResolvedValue([{ insertId: 99 }]),
+    });
+
+    // Re-apply invokeLLM mock after resetAllMocks
+    const { invokeLLM } = await import("./_core/llm");
+    vi.mocked(invokeLLM).mockResolvedValue({
+      choices: [{ message: { content: "Mocked LLM response" } }],
+      usage: { prompt_tokens: 50, completion_tokens: 100 },
+    } as any);
+  });
+
+  it("rejects request with missing Authorization header", async () => {
+    const ctx: TrpcContext = {
+      user: null,
+      req: { headers: {} } as any,
+      res: {} as any,
+    };
+    const caller = appRouter.createCaller(ctx);
+    await expect(
+      caller.skills.runByApiKey({ slug: "listing.title.generate", inputs: {} })
+    ).rejects.toMatchObject({ code: "UNAUTHORIZED" });
+  });
+
+  it("rejects request with wrong API key", async () => {
+    const ctx: TrpcContext = {
+      user: null,
+      req: { headers: { authorization: "Bearer wrong-key" } } as any,
+      res: {} as any,
+    };
+    const caller = appRouter.createCaller(ctx);
+    await expect(
+      caller.skills.runByApiKey({ slug: "listing.title.generate", inputs: {} })
+    ).rejects.toMatchObject({ code: "UNAUTHORIZED" });
+  });
+
+  it("returns NOT_FOUND when skill slug does not exist", async () => {
+    // Mock getDb to return db with select returning empty array
+    const { getDb } = await import("./db");
+    vi.mocked(getDb).mockResolvedValueOnce({
+      insert: mockInsert,
+      select: vi.fn().mockReturnValue({
+        from: vi.fn().mockReturnValue({
+          where: vi.fn().mockReturnValue({
+            limit: vi.fn().mockResolvedValue([]),
+          }),
+        }),
+      }),
+      update: vi.fn(),
+      delete: vi.fn(),
+    } as any);
+
+    const ctx: TrpcContext = {
+      user: null,
+      req: { headers: { authorization: `Bearer ${MOCK_API_KEY}` } } as any,
+      res: {} as any,
+    };
+    const caller = appRouter.createCaller(ctx);
+    await expect(
+      caller.skills.runByApiKey({ slug: "nonexistent.skill", inputs: {} })
+    ).rejects.toMatchObject({ code: "NOT_FOUND" });
+  });
+
+  it("successfully runs skill with valid API key and returns output", async () => {
+    const mockSkill = {
+      id: 1,
+      slug: "listing.title.generate",
+      name: "Listing标题生成",
+      promptTemplate: "请为{{product}}生成标题",
+      systemPrompt: "你是一个亚马逊标题优化专家",
+      modelId: null,
+      modelParams: { maxTokens: 2000 },
+      currentVersion: 1,
+      projectId: null,
+      status: "active",
+    };
+
+    // Both getDb calls share the same mock db instance
+    const mockInsertWithValues = vi.fn().mockReturnValue({
+      values: vi.fn().mockResolvedValue([{ insertId: 99 }]),
+    });
+    const { getDb } = await import("./db");
+    vi.mocked(getDb).mockResolvedValue({
+      insert: mockInsertWithValues,
+      select: vi.fn().mockReturnValue({
+        from: vi.fn().mockReturnValue({
+          where: vi.fn().mockReturnValue({
+            limit: vi.fn().mockResolvedValue([mockSkill]),
+          }),
+        }),
+      }),
+      update: vi.fn(),
+      delete: vi.fn(),
+    } as any);
+
+    const ctx: TrpcContext = {
+      user: null,
+      req: { headers: { authorization: `Bearer ${MOCK_API_KEY}` } } as any,
+      res: {} as any,
+    };
+    const caller = appRouter.createCaller(ctx);
+    const result = await caller.skills.runByApiKey({
+      slug: "listing.title.generate",
+      inputs: { product: "蓝牙耳机" },
+    });
+
+    expect(result).toMatchObject({
+      slug: "listing.title.generate",
+      output: "Mocked LLM response",
+      version: 1,
+    });
+    expect(result.inputTokens).toBe(50);
+    expect(result.outputTokens).toBe(100);
+  });
+
+  it("SKILL_API_KEY not configured returns INTERNAL_SERVER_ERROR", async () => {
+    delete process.env.SKILL_API_KEY;
+
+    const ctx: TrpcContext = {
+      user: null,
+      req: { headers: { authorization: `Bearer ${MOCK_API_KEY}` } } as any,
+      res: {} as any,
+    };
+    const caller = appRouter.createCaller(ctx);
+    await expect(
+      caller.skills.runByApiKey({ slug: "listing.title.generate", inputs: {} })
+    ).rejects.toMatchObject({ code: "INTERNAL_SERVER_ERROR" });
+  });
+});

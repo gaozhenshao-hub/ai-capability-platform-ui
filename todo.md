@@ -116,36 +116,36 @@
 ## Phase 5 — 知识库 + 监控 + 迁移对接（开发中）
 
 ### 5.1 知识库后端
-- [ ] knowledgeRouter：CRUD（list/get/create/update/delete）
-- [ ] knowledgeRouter：文档上传（S3 存储 + 文本提取）
-- [ ] knowledgeRouter：全文搜索（MySQL LIKE + 标签过滤）
-- [ ] knowledgeRouter：集合管理（getCollections/createCollection）
-- [ ] knowledgeRouter：审核流程（submit/approve/reject）
-- [ ] knowledgeRouter：批量导入（JSON/CSV）
-- [ ] 注册 knowledgeRouter 到 appRouter
+- [x] knowledgeRouter：CRUD（list/get/create/update/delete）
+- [x] knowledgeRouter：文档上传（S3 存储 + 文本提取）
+- [x] knowledgeRouter：全文搜索（MySQL LIKE + 标签过滤）
+- [x] knowledgeRouter：集合管理（getCollections/createCollection）
+- [x] knowledgeRouter：审核流程（submit/approve/reject）
+- [x] knowledgeRouter：批量导入（JSON/CSV）
+- [x] 注册 knowledgeRouter 到 appRouter
 
 ### 5.2 知识库前端
-- [ ] Knowledge.tsx 页面（左侧集合树 + 右侧条目列表）
-- [ ] 条目详情面板（Markdown 渲染 + 标签 + 来源）
-- [ ] 新建/编辑条目对话框（标题/内容/标签/集合）
-- [ ] 文档上传（PDF/TXT/MD 拖拽上传 + 进度条）
-- [ ] 全文搜索（实时搜索 + 高亮匹配）
-- [ ] 审核状态标签（草稿/待审核/已发布）
-- [ ] AI 对话式检索面板（AIChatBox 集成）
+- [x] Knowledge.tsx 页面（左侧集合树 + 右侧条目列表）
+- [x] 条目详情面板（Markdown 渲染 + 标签 + 来源）
+- [x] 新建/编辑条目对话框（标题/内容/标签/集合）
+- [x] 文档上传（PDF/TXT/MD 拖拽上传 + 进度条）
+- [x] 全文搜索（实时搜索 + 高亮匹配）
+- [x] 审核状态标签（草稿/待审核/已发布）
+- [x] AI 对话式检索面板（AIChatBox 集成）
 
 ### 5.3 监控仪表盘升级
-- [ ] statsRouter：Agent 运行统计（成功率/平均耗时/今日运行次数）
-- [ ] statsRouter：LLM 成本趋势（7天/30天 Token 消耗 + 费用）
-- [ ] statsRouter：错误率统计（按节点类型分组）
-- [ ] statsRouter：知识库使用统计（查询次数/热门集合）
-- [ ] Dashboard.tsx 升级（新增 Agent 运行卡片 + 知识库统计）
+- [x] statsRouter：Agent 运行统计（成功率/平均耗时/今日运行次数）
+- [x] statsRouter：LLM 成本趋势（7天/30天 Token 消耗 + 费用）
+- [x] statsRouter：错误率统计（按节点类型分组）
+- [x] statsRouter：知识库使用统计（查询次数/热门集合）
+- [x] Dashboard.tsx 升级（新增 Agent 运行卡片 + 知识库统计）
 
 ### 5.4 跨系统迁移接口
-- [ ] migrationRouter：从 Listing 工具导入 Skill（通过 API URL + Key）
-- [ ] migrationRouter：从产品开发工具导入知识库条目
-- [ ] migrationRouter：导出当前 Skill/Agent/Knowledge 为 JSON
-- [ ] 前端迁移向导页面（Settings 子页面）
+- [x] migrationRouter：从 Listing 工具导入 Skill（通过 API URL + Key）
+- [x] migrationRouter：从产品开发工具导入知识库条目
+- [x] migrationRouter：导出当前 Skill/Agent/Knowledge 为 JSON
+- [x] 前端迁移向导页面（Migration.tsx 独立页面）
 
 ### 5.5 测试
-- [ ] knowledge.test.ts：CRUD + 搜索 + 审核流程
-- [ ] 保存 checkpoint
+- [x] knowledge.test.ts：CRUD + 搜索 + 审核流程（87项全部通过）
+- [x] 保存 checkpoint（e266d8c2）

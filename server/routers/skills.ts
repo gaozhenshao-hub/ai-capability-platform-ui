@@ -9,7 +9,7 @@ import {
   aiLlmModels,
 } from "../../drizzle/schema";
 import { getDb } from "../db";
-import { protectedProcedure, router } from "../_core/trpc";
+import { protectedProcedure, publicProcedure, router } from "../_core/trpc";
 import { invokeLLM } from "../_core/llm";
 
 // ─── Helper: write audit log ──────────────────────────────────────────────────
@@ -733,6 +733,121 @@ export const skillsRouter = router({
       });
 
       return { results };
+    }),
+
+  // ─── API Key 鉴权调用接口（供外部系统如 Listing 工具调用）────────────────────
+  // 调用方式: POST /api/trpc/skills.runByApiKey
+  // Header: Authorization: Bearer <SKILL_API_KEY>
+  // Body: { json: { slug: "listing.title.generate", inputs: { title: "...", keywords: "..." } } }
+  runByApiKey: publicProcedure
+    .input(
+      z.object({
+        slug: z.string(),
+        inputs: z.record(z.string(), z.unknown()).optional().default({}),
+        modelOverride: z.string().optional(),
+      })
+    )
+    .mutation(async ({ ctx, input }) => {
+      // 1. 验证 API Key
+      const authHeader = ctx.req.headers.authorization;
+      const apiKey = process.env.SKILL_API_KEY;
+      if (!apiKey) {
+        throw new TRPCError({
+          code: "INTERNAL_SERVER_ERROR",
+          message: "SKILL_API_KEY not configured on server",
+        });
+      }
+      if (!authHeader || authHeader !== `Bearer ${apiKey}`) {
+        throw new TRPCError({
+          code: "UNAUTHORIZED",
+          message: "Invalid or missing API key",
+        });
+      }
+
+      // 2. 查找 Skill（按 slug）
+      const db = await getDb();
+      if (!db) throw new TRPCError({ code: "INTERNAL_SERVER_ERROR" });
+
+      const [skill] = await db
+        .select()
+        .from(aiSkills)
+        .where(and(eq(aiSkills.slug, input.slug), eq(aiSkills.status, "active")))
+        .limit(1);
+
+      if (!skill) {
+        throw new TRPCError({
+          code: "NOT_FOUND",
+          message: `Skill '${input.slug}' not found or not active`,
+        });
+      }
+
+      // 3. 渲染 Prompt 模板
+      const renderTemplate = (template: string, data: Record<string, unknown>) => {
+        return template.replace(/\{\{(\w+)\}\}/g, (_, key) => {
+          return data[key] !== undefined ? String(data[key]) : `{{${key}}}`;
+        });
+      };
+
+      const renderedPrompt = renderTemplate(skill.promptTemplate, input.inputs);
+      const messages: Array<{ role: "system" | "user"; content: string }> = [];
+      if (skill.systemPrompt) messages.push({ role: "system", content: skill.systemPrompt });
+      messages.push({ role: "user", content: renderedPrompt });
+
+      // 4. 调用 LLM
+      const startTime = Date.now();
+      let outputText = "";
+      let inputTokens = 0;
+      let outputTokens = 0;
+      let errorMsg: string | undefined;
+
+      try {
+        const modelParams = (skill.modelParams ?? {}) as Record<string, unknown>;
+        const response = await invokeLLM({
+          model: input.modelOverride,
+          messages,
+          max_tokens: typeof modelParams.maxTokens === "number" ? modelParams.maxTokens : 2048,
+        });
+        const rawContent = response.choices?.[0]?.message?.content;
+        outputText = typeof rawContent === "string" ? rawContent : JSON.stringify(rawContent ?? response);
+        inputTokens = response.usage?.prompt_tokens ?? 0;
+        outputTokens = response.usage?.completion_tokens ?? 0;
+      } catch (e) {
+        errorMsg = e instanceof Error ? e.message : String(e);
+      }
+
+      const durationMs = Date.now() - startTime;
+
+      // 5. 记录调用日志（source = "api"）
+      try {
+        await db.insert(aiSkillCalls).values({
+          skillId: skill.id,
+          skillVersion: skill.currentVersion ?? 1,
+          modelId: skill.modelId ?? undefined,
+          projectId: skill.projectId ?? undefined,
+          source: "api",
+          inputData: input.inputs,
+          outputData: errorMsg ? undefined : ({ text: outputText } as Record<string, unknown>),
+          inputTokens,
+          outputTokens,
+          durationMs,
+        });
+      } catch (e) {
+        console.warn("[SkillRunByApiKey] Failed to record call log:", e);
+      }
+
+      if (errorMsg) {
+        throw new TRPCError({ code: "INTERNAL_SERVER_ERROR", message: errorMsg });
+      }
+
+      return {
+        skillId: skill.id,
+        slug: skill.slug,
+        output: outputText,
+        inputTokens,
+        outputTokens,
+        durationMs,
+        version: skill.currentVersion,
+      };
     }),
 
   // Get available LLM models for selector
