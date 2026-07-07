@@ -114,11 +114,12 @@ export const dashboardRouter = router({
       if (!db) return [];
       const { from } = getTimeRange(input.range);
 
-      // 按天分组
+      // 按天分组（使用 sql.raw 避免格式字符串被参数化）
       const groupFormat = input.range === "24h" ? "%Y-%m-%d %H:00" : "%Y-%m-%d";
+      const dateFmt = sql.raw(`'${groupFormat}'`);
       const rows = await db
         .select({
-          period: sql<string>`DATE_FORMAT(${aiSkillCalls.createdAt}, ${groupFormat})`,
+          period: sql<string>`DATE_FORMAT(${aiSkillCalls.createdAt}, ${dateFmt})`,
           calls: count(),
           errors: sql<number>`SUM(CASE WHEN ${aiSkillCalls.errorMessage} IS NOT NULL THEN 1 ELSE 0 END)`,
           tokens: sql<number>`COALESCE(SUM(${aiSkillCalls.inputTokens} + ${aiSkillCalls.outputTokens}), 0)`,
@@ -126,8 +127,8 @@ export const dashboardRouter = router({
         })
         .from(aiSkillCalls)
         .where(gte(aiSkillCalls.createdAt, from))
-        .groupBy(sql`DATE_FORMAT(${aiSkillCalls.createdAt}, ${groupFormat})`)
-        .orderBy(sql`DATE_FORMAT(${aiSkillCalls.createdAt}, ${groupFormat})`);
+        .groupBy(sql`DATE_FORMAT(${aiSkillCalls.createdAt}, ${dateFmt})`)
+        .orderBy(sql`DATE_FORMAT(${aiSkillCalls.createdAt}, ${dateFmt})`);
 
       return rows.map(r => ({
         period: r.period,
@@ -238,16 +239,17 @@ export const dashboardRouter = router({
       if (!db) return [];
       const { from } = getTimeRange(input.range);
 
+      const auditFmt = sql.raw("'%Y-%m-%d'");
       const rows = await db
         .select({
-          day: sql<string>`DATE_FORMAT(${aiAuditLogs.createdAt}, '%Y-%m-%d')`,
+          day: sql<string>`DATE_FORMAT(${aiAuditLogs.createdAt}, ${auditFmt})`,
           total: count(),
           failures: sql<number>`SUM(CASE WHEN ${aiAuditLogs.result} = 'failure' THEN 1 ELSE 0 END)`,
         })
         .from(aiAuditLogs)
         .where(gte(aiAuditLogs.createdAt, from))
-        .groupBy(sql`DATE_FORMAT(${aiAuditLogs.createdAt}, '%Y-%m-%d')`)
-        .orderBy(sql`DATE_FORMAT(${aiAuditLogs.createdAt}, '%Y-%m-%d')`);
+        .groupBy(sql`DATE_FORMAT(${aiAuditLogs.createdAt}, ${auditFmt})`)
+        .orderBy(sql`DATE_FORMAT(${aiAuditLogs.createdAt}, ${auditFmt})`);
 
       return rows.map(r => ({
         day: r.day,
@@ -291,17 +293,18 @@ export const dashboardRouter = router({
       if (!db) return [];
       const { from } = getTimeRange(input.range);
 
+      const costFmt = sql.raw("'%Y-%m-%d'");
       const rows = await db
         .select({
-          day: sql<string>`DATE_FORMAT(${aiSkillCalls.createdAt}, '%Y-%m-%d')`,
+          day: sql<string>`DATE_FORMAT(${aiSkillCalls.createdAt}, ${costFmt})`,
           costUsd: sql<string>`COALESCE(SUM(${aiSkillCalls.costUsd}), '0')`,
           inputTokens: sql<number>`COALESCE(SUM(${aiSkillCalls.inputTokens}), 0)`,
           outputTokens: sql<number>`COALESCE(SUM(${aiSkillCalls.outputTokens}), 0)`,
         })
         .from(aiSkillCalls)
         .where(gte(aiSkillCalls.createdAt, from))
-        .groupBy(sql`DATE_FORMAT(${aiSkillCalls.createdAt}, '%Y-%m-%d')`)
-        .orderBy(sql`DATE_FORMAT(${aiSkillCalls.createdAt}, '%Y-%m-%d')`);
+        .groupBy(sql`DATE_FORMAT(${aiSkillCalls.createdAt}, ${costFmt})`)
+        .orderBy(sql`DATE_FORMAT(${aiSkillCalls.createdAt}, ${costFmt})`);
 
       return rows.map(r => ({
         day: r.day,
