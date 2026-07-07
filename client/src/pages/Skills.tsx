@@ -1,9 +1,10 @@
 import { trpc } from "@/lib/trpc";
-import { useState, useCallback } from "react";
+import { useState, useCallback, useRef } from "react";
 import { toast } from "sonner";
 import {
   Code2, Plus, CheckCircle, Clock, Archive, Search, Play, History, FileText, Activity,
-  Copy, RotateCcw, Cpu, Layers, Tag, Save, Trash2, ChevronDown, ChevronUp, ChevronRight, RefreshCw
+  Copy, RotateCcw, Cpu, Layers, Tag, Save, Trash2, ChevronDown, ChevronUp, ChevronRight, RefreshCw,
+  GitCompare, Upload, Download, X, AlertCircle
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -15,6 +16,8 @@ import {
 import {
   Select, SelectContent, SelectItem, SelectTrigger, SelectValue
 } from "@/components/ui/select";
+import { PromptEditor } from "@/components/PromptEditor";
+import { DiffViewer } from "@/components/DiffViewer";
 
 type SkillStatus = "draft" | "active" | "deprecated";
 type SkillScope = "global" | "project" | "private";
@@ -204,15 +207,25 @@ function SkillDialog({
             <div className="space-y-4">
               <div className="space-y-1.5">
                 <Label className="text-slate-300 text-xs">System Prompt <span className="text-slate-600 font-normal">（可选）</span></Label>
-                <Textarea value={form.systemPrompt} onChange={e => set("systemPrompt")(e.target.value)}
-                  placeholder="你是一个专业的 AI 助手..." rows={4}
-                  className="font-mono text-xs bg-[#0a0d14] border-white/10 text-slate-200 resize-y" />
+                <PromptEditor
+                  value={form.systemPrompt}
+                  onChange={set("systemPrompt")}
+                  placeholder="你是一个专业的 AI 助手，请用中文回答..."
+                  height={120}
+                  showPreview={false}
+                />
               </div>
               <div className="space-y-1.5">
-                <Label className="text-slate-300 text-xs">Prompt 模板 * <span className="text-slate-600 font-normal">（使用 {"{{variable}}"} 引用输入变量）</span></Label>
-                <Textarea value={form.promptTemplate} onChange={e => set("promptTemplate")(e.target.value)}
-                  placeholder="请分析以下内容：{{input}}" rows={12}
-                  className="font-mono text-xs bg-[#0a0d14] border-white/10 text-slate-200 resize-y" />
+                <Label className="text-slate-300 text-xs">
+                  Prompt 模板 * <span className="text-slate-600 font-normal">(使用 {"{{variable}}"} 引用输入变量，输入 {"{{"} 触发自动补全)</span>
+                </Label>
+                <PromptEditor
+                  value={form.promptTemplate}
+                  onChange={set("promptTemplate")}
+                  placeholder="请分析以下内容：{{input}}"
+                  height={220}
+                  showPreview={true}
+                />
               </div>
             </div>
           )}
@@ -305,6 +318,8 @@ function VersionHistoryPanel({ skillId, currentVersion }: { skillId: number; cur
   const utils = trpc.useUtils();
   const { data: versions, isLoading } = trpc.skills.getVersions.useQuery({ skillId });
   const [expandedVer, setExpandedVer] = useState<number | null>(null);
+  const [diffPair, setDiffPair] = useState<[number, number] | null>(null);
+  const [diffMode, setDiffMode] = useState<"split" | "unified">("split");
 
   const rollbackMutation = trpc.skills.rollback.useMutation({
     onSuccess: (data) => {
@@ -316,26 +331,112 @@ function VersionHistoryPanel({ skillId, currentVersion }: { skillId: number; cur
     onError: (e) => toast.error(`回滚失败：${e.message}`),
   });
 
+  const { data: diffData, isLoading: diffLoading } = trpc.skills.diffVersions.useQuery(
+    { skillId, versionA: diffPair?.[0] ?? 0, versionB: diffPair?.[1] ?? 0 },
+    { enabled: !!diffPair }
+  );
+
   if (isLoading) return <div className="flex items-center justify-center py-12"><div className="h-5 w-5 animate-spin rounded-full border-2 border-violet-500 border-t-transparent" /></div>;
   if (!versions?.length) return <div className="flex flex-col items-center justify-center py-12 text-slate-500"><History className="h-8 w-8 mb-2 text-slate-700" /><p className="text-sm">暂无版本记录</p></div>;
 
   return (
-    <div className="space-y-2">
+    <div className="space-y-3">
+      {/* Diff panel */}
+      {diffPair && (
+        <div className="rounded-xl border border-violet-500/30 bg-violet-500/5 p-4 space-y-3">
+          <div className="flex items-center justify-between">
+            <div className="flex items-center gap-2">
+              <GitCompare className="h-4 w-4 text-violet-400" />
+              <span className="text-sm font-medium text-violet-300">v{diffPair[0]} → v{diffPair[1]} 差异对比</span>
+            </div>
+            <div className="flex items-center gap-2">
+              <div className="flex rounded-lg overflow-hidden border border-white/10">
+                {(["split", "unified"] as const).map(m => (
+                  <button key={m} onClick={() => setDiffMode(m)}
+                    className={`px-2.5 py-1 text-xs transition-colors ${
+                      diffMode === m ? "bg-violet-600 text-white" : "bg-transparent text-slate-400 hover:text-slate-200"
+                    }`}>
+                    {m === "split" ? "左右对比" : "统一视图"}
+                  </button>
+                ))}
+              </div>
+              <button onClick={() => setDiffPair(null)} className="rounded p-1 text-slate-500 hover:text-slate-300">
+                <X className="h-4 w-4" />
+              </button>
+            </div>
+          </div>
+          {diffLoading ? (
+            <div className="flex items-center justify-center py-8">
+              <div className="h-5 w-5 animate-spin rounded-full border-2 border-violet-500 border-t-transparent" />
+            </div>
+          ) : diffData ? (
+            <div className="space-y-3">
+              <div>
+                <p className="text-xs text-slate-500 mb-1.5 font-medium">Prompt 模板差异</p>
+                <DiffViewer
+                  oldText={diffData.versionA.promptTemplate}
+                  newText={diffData.versionB.promptTemplate}
+                  oldLabel={`v${diffPair[0]}${diffData.versionA.changeNote ? ` (${diffData.versionA.changeNote})` : ""}`}
+                  newLabel={`v${diffPair[1]}${diffData.versionB.changeNote ? ` (${diffData.versionB.changeNote})` : ""}`}
+                  mode={diffMode}
+                />
+              </div>
+              {(diffData.versionA.systemPrompt || diffData.versionB.systemPrompt) && (
+                <div>
+                  <p className="text-xs text-slate-500 mb-1.5 font-medium">System Prompt 差异</p>
+                  <DiffViewer
+                    oldText={diffData.versionA.systemPrompt}
+                    newText={diffData.versionB.systemPrompt}
+                    oldLabel={`v${diffPair[0]}`}
+                    newLabel={`v${diffPair[1]}`}
+                    mode={diffMode}
+                  />
+                </div>
+              )}
+            </div>
+          ) : null}
+        </div>
+      )}
+
+      {/* Version list */}
       {versions.map(ver => (
         <div key={ver.version} className="rounded-lg border border-white/8 bg-[#0a0d14] overflow-hidden">
           <div className="flex items-center gap-3 px-4 py-3">
-            <div className={`w-6 h-6 rounded-full flex items-center justify-center text-xs font-bold ${ver.version === currentVersion ? "bg-violet-600 text-white" : "bg-white/5 text-slate-400"}`}>{ver.version}</div>
+            <div className={`w-6 h-6 rounded-full flex items-center justify-center text-xs font-bold ${
+              ver.version === currentVersion ? "bg-violet-600 text-white" : "bg-white/5 text-slate-400"
+            }`}>{ver.version}</div>
             <div className="flex-1 min-w-0">
-              <p className="text-sm text-slate-200 truncate">{ver.changeNote ?? `版本 ${ver.version}`}{ver.version === currentVersion && <span className="ml-2 text-xs text-violet-400">（当前）</span>}</p>
+              <p className="text-sm text-slate-200 truncate">
+                {ver.changeNote ?? `版本 ${ver.version}`}
+                {ver.version === currentVersion && <span className="ml-2 text-xs text-violet-400">（当前）</span>}
+              </p>
               <p className="text-xs text-slate-500 mt-0.5">{new Date(ver.createdAt!).toLocaleString()}</p>
             </div>
             <div className="flex items-center gap-1">
-              <button onClick={() => setExpandedVer(expandedVer === ver.version ? null : ver.version)} className="rounded p-1.5 text-slate-500 hover:bg-white/5 hover:text-slate-300">
+              {ver.version !== currentVersion && (
+                <button
+                  onClick={() => setDiffPair(diffPair?.[0] === ver.version ? null : [ver.version, currentVersion])}
+                  className={`rounded p-1.5 transition-colors ${
+                    diffPair?.[0] === ver.version
+                      ? "bg-violet-500/20 text-violet-400"
+                      : "text-slate-500 hover:bg-violet-500/10 hover:text-violet-400"
+                  }`}
+                  title={`与当前版本 v${currentVersion} 对比`}
+                >
+                  <GitCompare className="h-4 w-4" />
+                </button>
+              )}
+              <button onClick={() => setExpandedVer(expandedVer === ver.version ? null : ver.version)}
+                className="rounded p-1.5 text-slate-500 hover:bg-white/5 hover:text-slate-300">
                 {expandedVer === ver.version ? <ChevronUp className="h-4 w-4" /> : <ChevronDown className="h-4 w-4" />}
               </button>
               {ver.version !== currentVersion && (
-                <button onClick={() => { if (confirm(`确定回滚到版本 ${ver.version}？`)) rollbackMutation.mutate({ skillId, version: ver.version }); }}
-                  disabled={rollbackMutation.isPending} className="rounded p-1.5 text-slate-500 hover:bg-amber-500/10 hover:text-amber-400" title="回滚">
+                <button
+                  onClick={() => { if (confirm(`确定回滚到版本 ${ver.version}？`)) rollbackMutation.mutate({ skillId, version: ver.version }); }}
+                  disabled={rollbackMutation.isPending}
+                  className="rounded p-1.5 text-slate-500 hover:bg-amber-500/10 hover:text-amber-400"
+                  title="回滚"
+                >
                   <RotateCcw className="h-4 w-4" />
                 </button>
               )}
@@ -345,7 +446,10 @@ function VersionHistoryPanel({ skillId, currentVersion }: { skillId: number; cur
             <div className="border-t border-white/5 px-4 py-3 space-y-2">
               <p className="text-xs text-slate-500 font-medium">Prompt 模板</p>
               <pre className="text-xs text-slate-300 font-mono bg-black/20 p-3 rounded whitespace-pre-wrap max-h-40 overflow-y-auto">{ver.promptTemplate}</pre>
-              {ver.systemPrompt && (<><p className="text-xs text-slate-500 font-medium">System Prompt</p><pre className="text-xs text-slate-300 font-mono bg-black/20 p-3 rounded whitespace-pre-wrap max-h-24 overflow-y-auto">{ver.systemPrompt}</pre></>)}
+              {ver.systemPrompt && (
+                <><p className="text-xs text-slate-500 font-medium">System Prompt</p>
+                <pre className="text-xs text-slate-300 font-mono bg-black/20 p-3 rounded whitespace-pre-wrap max-h-24 overflow-y-auto">{ver.systemPrompt}</pre></>
+              )}
             </div>
           )}
         </div>
@@ -387,6 +491,210 @@ function CallLogsPanel({ skillId }: { skillId: number }) {
         </div>
       )}
     </div>
+  );
+}
+
+// ─── Bulk Import Dialog ───────────────────────────────────────────────────────
+function BulkImportDialog({ open, onClose }: { open: boolean; onClose: () => void }) {
+  const utils = trpc.useUtils();
+  const fileRef = useRef<HTMLInputElement>(null);
+  const [jsonText, setJsonText] = useState("");
+  const [parsed, setParsed] = useState<unknown[] | null>(null);
+  const [parseError, setParseError] = useState("");
+  const [overwrite, setOverwrite] = useState(false);
+  // Step: 'edit' = JSON 输入阶段, 'preview' = 预览确认阶段
+  const [step, setStep] = useState<"edit" | "preview">("edit");
+
+  type ParsedSkill = { name: string; slug?: string; description?: string; category?: string; promptTemplate: string; systemPrompt?: string; _valid: boolean; _error?: string; };
+  const [previewList, setPreviewList] = useState<ParsedSkill[]>([]);
+
+  const importMutation = trpc.skills.bulkImport.useMutation({
+    onSuccess: (data) => {
+      const created = data.results.filter(r => r.status === "created").length;
+      const updated = data.results.filter(r => r.status === "updated").length;
+      const skipped = data.results.filter(r => r.status === "skipped").length;
+      toast.success(`导入完成：新建 ${created}，更新 ${updated}，跳过 ${skipped}`);
+      utils.skills.list.invalidate();
+      onClose();
+    },
+    onError: (e) => toast.error(`导入失败：${e.message}`),
+  });
+
+  const tryParse = (text: string) => {
+    try {
+      const data = JSON.parse(text);
+      const arr: unknown[] = Array.isArray(data) ? data : (data as Record<string, unknown>).skills ? (data as Record<string, unknown[]>).skills : [data];
+      setParsed(arr);
+      setParseError("");
+    } catch (e: unknown) {
+      setParsed(null);
+      setParseError(e instanceof Error ? e.message : "JSON 解析失败");
+    }
+  };
+
+  const buildPreview = () => {
+    if (!parsed?.length) return;
+    const list = (parsed as Record<string, unknown>[]).map((item) => {
+      const name = typeof item.name === "string" ? item.name.trim() : "";
+      const promptTemplate = typeof item.promptTemplate === "string" ? item.promptTemplate.trim() : "";
+      const valid = !!name && !!promptTemplate;
+      return {
+        name,
+        slug: typeof item.slug === "string" ? item.slug : undefined,
+        description: typeof item.description === "string" ? item.description : undefined,
+        category: typeof item.category === "string" ? item.category : undefined,
+        promptTemplate,
+        systemPrompt: typeof item.systemPrompt === "string" ? item.systemPrompt : undefined,
+        _valid: valid,
+        _error: !name ? "缺少 name 字段" : !promptTemplate ? "缺少 promptTemplate 字段" : undefined,
+      };
+    });
+    setPreviewList(list);
+    setStep("preview");
+  };
+
+  const handleFileChange = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+    const reader = new FileReader();
+    reader.onload = (ev) => {
+      const text = ev.target?.result as string;
+      setJsonText(text);
+      tryParse(text);
+    };
+    reader.readAsText(file);
+  };
+
+  const handleTextChange = (text: string) => {
+    setJsonText(text);
+    if (text.trim()) tryParse(text);
+    else { setParsed(null); setParseError(""); }
+  };
+
+  const handleImport = () => {
+    if (!parsed?.length) return;
+    importMutation.mutate({
+      skills: parsed as Parameters<typeof importMutation.mutate>[0]["skills"],
+      overwriteExisting: overwrite,
+    });
+  };
+
+  const EXAMPLE = JSON.stringify([
+    { name: "标题生成", slug: "listing-title", description: "生成亚马逊产品标题", category: "Listing生成",
+      promptTemplate: "类目：{{category}}\n关键词：{{keywords}}\n\n请生成3个优化标题。",
+      systemPrompt: "你是亚马逊Listing优化专家。" },
+    { name: "五点描述", slug: "listing-bullets", description: "生成五点描述", category: "Listing生成",
+      promptTemplate: "产品特征：{{features}}\n\n请生成5条Bullet Points。" },
+  ], null, 2);
+
+  const validCount = previewList.filter(p => p._valid).length;
+  const invalidCount = previewList.filter(p => !p._valid).length;
+
+  return (
+    <Dialog open={open} onOpenChange={(o) => !o && onClose()}>
+      <DialogContent className="max-w-2xl bg-[#0d1117] border-white/10 text-white max-h-[90vh] overflow-y-auto">
+        <DialogHeader>
+          <DialogTitle className="text-white flex items-center gap-2">
+            <Upload className="h-5 w-5 text-violet-400" />
+            {step === "edit" ? "批量导入 Skills" : `确认导入 — ${validCount} 条有效记录`}
+          </DialogTitle>
+        </DialogHeader>
+
+        {step === "edit" ? (
+          <div className="space-y-4">
+            <div className="rounded-lg border border-amber-500/20 bg-amber-500/5 p-3 text-xs text-amber-400 space-y-1">
+              <p className="font-medium">支持 JSON 格式导入，每条记录需包含 name 和 promptTemplate 字段。</p>
+              <p>可选字段：slug、description、category、scope、systemPrompt、inputSchema、outputSchema、modelParams</p>
+            </div>
+            <div className="flex items-center gap-3">
+              <Button variant="outline" size="sm" onClick={() => fileRef.current?.click()}
+                className="border-white/10 text-slate-300 hover:bg-white/5 gap-2">
+                <Upload className="h-4 w-4" /> 上传 JSON 文件
+              </Button>
+              <Button variant="ghost" size="sm" onClick={() => { setJsonText(EXAMPLE); tryParse(EXAMPLE); }}
+                className="text-slate-500 hover:text-slate-300 text-xs gap-1.5">
+                <Download className="h-3.5 w-3.5" /> 加载示例
+              </Button>
+              <input ref={fileRef} type="file" accept=".json" className="hidden" onChange={handleFileChange} />
+            </div>
+            <div className="space-y-1.5">
+              <Label className="text-slate-300 text-xs">JSON 内容</Label>
+              <Textarea value={jsonText} onChange={e => handleTextChange(e.target.value)}
+                placeholder='[{"name": "...", "promptTemplate": "..."}]'
+                rows={10} className="font-mono text-xs bg-[#0a0d14] border-white/10 text-slate-200 resize-y" />
+            </div>
+            {parseError && (
+              <div className="flex items-start gap-2 rounded-lg border border-red-500/20 bg-red-500/5 p-3">
+                <AlertCircle className="h-4 w-4 text-red-400 shrink-0 mt-0.5" />
+                <p className="text-xs text-red-400">{parseError}</p>
+              </div>
+            )}
+            {parsed && !parseError && (
+              <div className="flex items-center gap-2 rounded-lg border border-emerald-500/20 bg-emerald-500/5 p-3">
+                <CheckCircle className="h-4 w-4 text-emerald-400" />
+                <p className="text-xs text-emerald-400">解析成功，共 {parsed.length} 条 Skill 记录，点击“预览确认”查看详情</p>
+              </div>
+            )}
+          </div>
+        ) : (
+          /* Preview step */
+          <div className="space-y-3">
+            <div className="flex items-center gap-3 text-xs">
+              <span className="text-emerald-400">✓ {validCount} 条有效</span>
+              {invalidCount > 0 && <span className="text-red-400">✗ {invalidCount} 条无效（将被跳过）</span>}
+            </div>
+            <div className="rounded-xl border border-white/8 overflow-hidden max-h-72 overflow-y-auto">
+              <div className="grid text-xs font-medium px-4 py-2 border-b border-white/8 bg-[#0a0d14] text-slate-500"
+                style={{ gridTemplateColumns: "2fr 1fr 1fr 1fr" }}>
+                <span>名称</span><span>Slug</span><span>分类</span><span>状态</span>
+              </div>
+              {previewList.map((item, i) => (
+                <div key={i} className={`grid items-center px-4 py-2.5 border-b border-white/5 text-xs ${
+                  item._valid ? "hover:bg-white/2" : "bg-red-950/20"
+                }`} style={{ gridTemplateColumns: "2fr 1fr 1fr 1fr" }}>
+                  <span className="truncate text-slate-200 font-medium">{item.name || <span className="text-red-400 italic">缺少名称</span>}</span>
+                  <span className="text-slate-500 font-mono truncate">{item.slug ?? "自动生成"}</span>
+                  <span className="text-slate-500 truncate">{item.category ?? "未分类"}</span>
+                  <span className={item._valid ? "text-emerald-400" : "text-red-400"}>
+                    {item._valid ? "就绪导入" : item._error}
+                  </span>
+                </div>
+              ))}
+            </div>
+            <div className="flex items-center gap-2">
+              <input type="checkbox" id="overwrite2" checked={overwrite} onChange={e => setOverwrite(e.target.checked)}
+                className="rounded border-white/20 bg-[#0a0d14]" />
+              <label htmlFor="overwrite2" className="text-xs text-slate-400 cursor-pointer">
+                覆盖已存在的 Skill（相同 slug 时更新而非跳过）
+              </label>
+            </div>
+          </div>
+        )}
+
+        <DialogFooter className="gap-2">
+          {step === "edit" ? (
+            <>
+              <Button variant="ghost" onClick={onClose} className="text-slate-400 hover:text-white">取消</Button>
+              <Button onClick={buildPreview} disabled={!parsed?.length || !!parseError}
+                className="bg-violet-600 hover:bg-violet-500 text-white gap-2">
+                <ChevronRight className="h-4 w-4" />预览确认
+              </Button>
+            </>
+          ) : (
+            <>
+              <Button variant="ghost" onClick={() => setStep("edit")} className="text-slate-400 hover:text-white">返回修改</Button>
+              <Button onClick={handleImport} disabled={validCount === 0 || importMutation.isPending}
+                className="bg-violet-600 hover:bg-violet-500 text-white gap-2">
+                {importMutation.isPending
+                  ? <div className="h-4 w-4 animate-spin rounded-full border-2 border-white border-t-transparent" />
+                  : <Upload className="h-4 w-4" />}
+                确认导入 {validCount} 条
+              </Button>
+            </>
+          )}
+        </DialogFooter>
+      </DialogContent>
+    </Dialog>
   );
 }
 
@@ -491,6 +799,7 @@ export default function Skills() {
   const [selectedId, setSelectedId] = useState<number | null>(null);
   const [showCreateDialog, setShowCreateDialog] = useState(false);
   const [editingSkill, setEditingSkill] = useState<number | null>(null);
+  const [showImportDialog, setShowImportDialog] = useState(false);
 
   const { data: skills, isLoading } = trpc.skills.list.useQuery({
     search: search || undefined,
@@ -523,9 +832,15 @@ export default function Skills() {
           <h1 className="text-xl font-semibold text-white flex items-center gap-2"><Code2 className="h-5 w-5 text-violet-400" />Skill 技能管理</h1>
           <p className="mt-0.5 text-sm text-slate-400">管理 AI Prompt 技能模板，支持版本控制、运行测试和调用日志</p>
         </div>
-        <Button onClick={() => setShowCreateDialog(true)} className="bg-violet-600 hover:bg-violet-500 text-white gap-2" size="sm">
-          <Plus className="h-4 w-4" />创建 Skill
-        </Button>
+        <div className="flex items-center gap-2">
+          <Button variant="outline" onClick={() => setShowImportDialog(true)} size="sm"
+            className="border-white/10 text-slate-300 hover:bg-white/5 gap-2">
+            <Upload className="h-4 w-4" />批量导入
+          </Button>
+          <Button onClick={() => setShowCreateDialog(true)} className="bg-violet-600 hover:bg-violet-500 text-white gap-2" size="sm">
+            <Plus className="h-4 w-4" />创建 Skill
+          </Button>
+        </div>
       </div>
       <div className="grid grid-cols-4 gap-4 px-6 py-4 border-b border-white/8 flex-shrink-0">
         {[{ label: "全部 Skill", value: allSkills.length, icon: Layers, color: "text-slate-300" }, { label: "活跃", value: activeCount, icon: CheckCircle, color: "text-emerald-400" }, { label: "草稿", value: draftCount, icon: Clock, color: "text-amber-400" }, { label: "已废弃", value: deprecatedCount, icon: Archive, color: "text-slate-500" }].map(stat => (
@@ -608,6 +923,7 @@ export default function Skills() {
         </div>
       </div>
       {showCreateDialog && <SkillDialog open={showCreateDialog} onClose={() => setShowCreateDialog(false)} models={models ?? []} />}
+      {showImportDialog && <BulkImportDialog open={showImportDialog} onClose={() => setShowImportDialog(false)} />}
       {editingSkill !== null && selectedSkill && (
         <SkillDialog open={true} onClose={() => setEditingSkill(null)} editId={editingSkill}
           initialData={{

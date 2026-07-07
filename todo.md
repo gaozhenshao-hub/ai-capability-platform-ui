@@ -78,3 +78,12 @@
 - [ ] 9 种节点类型
 - [ ] 人工审核节点
 - [ ] 运行进度可视化
+
+## Phase 3 补充 — Monaco 编辑器 + 版本 Diff + Prompt 导入
+
+- [x] 安装 @monaco-editor/react 并封装 PromptEditor 组件（变量高亮、自动补全 {{变量}}）
+- [x] Skills.tsx 中替换 Textarea 为 Monaco PromptEditor（System Prompt + User Prompt）
+- [x] 实时变量解析预览面板（显示检测到的变量列表 + 填写示例值 → 预览渲染结果）
+- [x] 后端 skills.diffVersions 接口（对比两个版本的 systemPrompt/userPromptTemplate 差异）
+- [x] 前端版本 diff 对比视图（左右双栏 diff，高亮增删行）
+- [x] Prompt 批量导入功能（从 JSON 导入 Skill 列表，支持预览确认后批量写入）

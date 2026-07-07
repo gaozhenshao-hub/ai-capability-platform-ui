@@ -547,6 +547,194 @@ export const skillsRouter = router({
       return { totalCalls, avgDurationMs, adoptionRate, totalTokens };
     }),
 
+  // Diff two versions of a skill (returns field-level diff data)
+  diffVersions: protectedProcedure
+    .input(
+      z.object({
+        skillId: z.number(),
+        versionA: z.number(),
+        versionB: z.number(),
+      })
+    )
+    .query(async ({ input }) => {
+      const db = await getDb();
+      if (!db) throw new TRPCError({ code: "INTERNAL_SERVER_ERROR" });
+
+      const [verA] = await db
+        .select()
+        .from(aiSkillVersions)
+        .where(
+          and(
+            eq(aiSkillVersions.skillId, input.skillId),
+            eq(aiSkillVersions.version, input.versionA)
+          )
+        )
+        .limit(1);
+
+      const [verB] = await db
+        .select()
+        .from(aiSkillVersions)
+        .where(
+          and(
+            eq(aiSkillVersions.skillId, input.skillId),
+            eq(aiSkillVersions.version, input.versionB)
+          )
+        )
+        .limit(1);
+
+      if (!verA) throw new TRPCError({ code: "NOT_FOUND", message: `版本 ${input.versionA} 不存在` });
+      if (!verB) throw new TRPCError({ code: "NOT_FOUND", message: `版本 ${input.versionB} 不存在` });
+
+      return {
+        versionA: {
+          version: verA.version,
+          promptTemplate: verA.promptTemplate ?? "",
+          systemPrompt: verA.systemPrompt ?? "",
+          changeNote: verA.changeNote ?? "",
+          createdAt: verA.createdAt,
+        },
+        versionB: {
+          version: verB.version,
+          promptTemplate: verB.promptTemplate ?? "",
+          systemPrompt: verB.systemPrompt ?? "",
+          changeNote: verB.changeNote ?? "",
+          createdAt: verB.createdAt,
+        },
+      };
+    }),
+
+  // Bulk import skills from JSON array
+  bulkImport: protectedProcedure
+    .input(
+      z.object({
+        skills: z.array(
+          z.object({
+            name: z.string().min(1).max(128),
+            slug: z.string().min(1).max(64).regex(/^[a-z0-9-]+$/).optional(),
+            description: z.string().optional(),
+            category: z.string().optional(),
+            scope: z.enum(["global", "project", "private"]).default("project"),
+            promptTemplate: z.string().min(1),
+            systemPrompt: z.string().optional(),
+            inputSchema: z.record(z.string(), z.unknown()).optional(),
+            outputSchema: z.record(z.string(), z.unknown()).optional(),
+            modelParams: z
+              .object({
+                temperature: z.number().optional(),
+                maxTokens: z.number().optional(),
+              })
+              .optional(),
+          })
+        ).min(1).max(100),
+        overwriteExisting: z.boolean().default(false),
+      })
+    )
+    .mutation(async ({ ctx, input }) => {
+      const db = await getDb();
+      if (!db) throw new TRPCError({ code: "INTERNAL_SERVER_ERROR" });
+
+      const results: Array<{ slug: string; status: "created" | "skipped" | "updated"; id?: number }> = [];
+
+      for (const item of input.skills) {
+        const slug =
+          item.slug ??
+          item.name
+            .toLowerCase()
+            .replace(/[^a-z0-9]+/g, "-")
+            .replace(/^-|-$/g, "");
+
+        // Check if skill with same slug exists
+        const [existing] = await db
+          .select({ id: aiSkills.id, currentVersion: aiSkills.currentVersion })
+          .from(aiSkills)
+          .where(eq(aiSkills.slug, slug))
+          .limit(1);
+
+        if (existing && !input.overwriteExisting) {
+          results.push({ slug, status: "skipped" });
+          continue;
+        }
+
+        if (existing && input.overwriteExisting) {
+          const newVersion = (existing.currentVersion ?? 1) + 1;
+          await db
+            .update(aiSkills)
+            .set({
+              name: item.name,
+              description: item.description,
+              category: item.category,
+              promptTemplate: item.promptTemplate,
+              systemPrompt: item.systemPrompt,
+              inputSchema: item.inputSchema,
+              outputSchema: item.outputSchema,
+              modelParams: item.modelParams as Record<string, unknown>,
+              currentVersion: newVersion,
+              updatedAt: new Date(),
+            })
+            .where(eq(aiSkills.id, existing.id));
+
+          await db.insert(aiSkillVersions).values({
+            skillId: existing.id,
+            version: newVersion,
+            promptTemplate: item.promptTemplate,
+            systemPrompt: item.systemPrompt,
+            modelParams: item.modelParams as Record<string, unknown>,
+            changeNote: "批量导入覆盖",
+            createdBy: ctx.user.id,
+          });
+
+          results.push({ slug, status: "updated", id: existing.id });
+        } else {
+          // Create new
+          const [newSkill] = await db
+            .insert(aiSkills)
+            .values({
+              name: item.name,
+              slug,
+              description: item.description,
+              category: item.category,
+              scope: item.scope,
+              status: "draft",
+              promptTemplate: item.promptTemplate,
+              systemPrompt: item.systemPrompt,
+              inputSchema: item.inputSchema,
+              outputSchema: item.outputSchema,
+              modelParams: item.modelParams as Record<string, unknown>,
+              currentVersion: 1,
+              createdBy: ctx.user.id,
+            })
+            .$returningId();
+
+          if (newSkill) {
+            await db.insert(aiSkillVersions).values({
+              skillId: newSkill.id,
+              version: 1,
+              promptTemplate: item.promptTemplate,
+              systemPrompt: item.systemPrompt,
+              modelParams: item.modelParams as Record<string, unknown>,
+              changeNote: "批量导入创建",
+              createdBy: ctx.user.id,
+            });
+            results.push({ slug, status: "created", id: newSkill.id });
+          }
+        }
+      }
+
+      await writeAuditLog({
+        userId: ctx.user.id,
+        action: "bulk_import",
+        resourceType: "skill",
+        afterData: {
+          total: input.skills.length,
+          created: results.filter((r) => r.status === "created").length,
+          updated: results.filter((r) => r.status === "updated").length,
+          skipped: results.filter((r) => r.status === "skipped").length,
+        },
+      });
+
+      return { results };
+    }),
+
   // Get available LLM models for selector
   getAvailableModels: protectedProcedure.query(async () => {
     const db = await getDb();
