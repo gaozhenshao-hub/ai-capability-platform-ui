@@ -114,20 +114,20 @@ export default function AppLayout({ children }: { children: React.ReactNode }) {
           {navItems.map((item) => {
             const isActive = location === item.path || (item.path !== "/" && location.startsWith(item.path));
             return (
-              <Link key={item.path} href={item.path}>
-                <a
-                  className={cn(
-                    "flex items-center gap-2.5 rounded-lg px-2.5 py-2 text-sm transition-colors",
-                    isActive
-                      ? "bg-violet-600/20 text-violet-300 ring-1 ring-violet-500/30"
-                      : "text-slate-400 hover:bg-white/5 hover:text-slate-200",
-                    collapsed && "justify-center px-2"
-                  )}
-                  title={collapsed ? item.label : undefined}
-                >
-                  <item.icon className="h-4 w-4 shrink-0" />
-                  {!collapsed && <span className="truncate">{item.label}</span>}
-                </a>
+              <Link
+                key={item.path}
+                href={item.path}
+                className={cn(
+                  "flex items-center gap-2.5 rounded-lg px-2.5 py-2 text-sm transition-colors",
+                  isActive
+                    ? "bg-violet-600/20 text-violet-300 ring-1 ring-violet-500/30"
+                    : "text-slate-400 hover:bg-white/5 hover:text-slate-200",
+                  collapsed && "justify-center px-2"
+                )}
+                title={collapsed ? item.label : undefined}
+              >
+                <item.icon className="h-4 w-4 shrink-0" />
+                {!collapsed && <span className="truncate">{item.label}</span>}
               </Link>
             );
           })}
