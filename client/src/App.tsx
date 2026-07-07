@@ -3,7 +3,6 @@ import { TooltipProvider } from "@/components/ui/tooltip";
 import { Route, Switch } from "wouter";
 import ErrorBoundary from "./components/ErrorBoundary";
 import { ThemeProvider } from "./contexts/ThemeContext";
-import Layout from "./components/Layout";
 import Dashboard from "./pages/Dashboard";
 import Skills from "./pages/Skills";
 import Agents from "./pages/Agents";
@@ -11,22 +10,25 @@ import Models from "./pages/Models";
 import McpPage from "./pages/Mcp";
 import Knowledge from "./pages/Knowledge";
 import Audit from "./pages/Audit";
+import Projects from "./pages/Projects";
 import NotFound from "./pages/NotFound";
+import AppLayout from "./components/AppLayout";
 
 function Router() {
   return (
-    <Layout>
+    <AppLayout>
       <Switch>
         <Route path="/"          component={Dashboard} />
+        <Route path="/projects"  component={Projects} />
+        <Route path="/models"    component={Models} />
         <Route path="/skills"    component={Skills} />
         <Route path="/agents"    component={Agents} />
-        <Route path="/models"    component={Models} />
         <Route path="/mcp"       component={McpPage} />
         <Route path="/knowledge" component={Knowledge} />
         <Route path="/audit"     component={Audit} />
         <Route component={NotFound} />
       </Switch>
-    </Layout>
+    </AppLayout>
   );
 }
 
