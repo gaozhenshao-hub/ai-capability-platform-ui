@@ -199,3 +199,15 @@
 - [x] 前端：历史记录按钮（切换到会话列表面板）
 - [x] 全量 Vitest 测试 115 项全部通过（7 test files，新增 10 项持久化测试）
 - [x] TypeScript 0 错误
+
+## Phase 6.3 — AI 助手 Token 统计面板 + LLM 模型设置（开发中）
+
+- [ ] 后端：dashboard.getAssistantTokenStats 接口（按天汇总 ai_assistant_messages 的 Token 消耗）
+- [ ] 后端：assistant.getSettings / assistant.updateSettings 接口（读取/保存 AI 助手模型配置）
+- [ ] 后端：assistant.listAvailableModels 接口（列出可用 LLM 模型）
+- [ ] 数据库：ai_assistant_settings 表（存储每用户的 AI 助手模型配置）
+- [ ] 后端：chatWithSession 使用用户配置的模型（而非硬编码默认模型）
+- [ ] 仪表盘：新增 AI 助手 Token 趋势图（AreaChart，输入/输出 Token 双线）
+- [ ] 仪表盘：新增 AI 助手统计卡片（总对话数 / 总消息数 / 总 Token）
+- [ ] AI 助手组件：新增设置面板（齿轮图标 → 模型选择 + temperature + maxTokens）
+- [ ] Vitest 测试覆盖新接口

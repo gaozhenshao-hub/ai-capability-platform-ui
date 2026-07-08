@@ -411,3 +411,24 @@ export const aiAssistantMessages = mysqlTable("ai_assistant_messages", {
 });
 export type AiAssistantMessage = typeof aiAssistantMessages.$inferSelect;
 export type InsertAiAssistantMessage = typeof aiAssistantMessages.$inferInsert;
+
+// ─── AI 助手设置表（每用户独立配置）─────────────────────────────────────────
+export const aiAssistantSettings = mysqlTable("ai_assistant_settings", {
+  id: int("id").autoincrement().primaryKey(),
+  /** 用户 ID（每用户一条记录） */
+  userId: int("userId").notNull().unique(),
+  /** 使用的 LLM 模型 ID（如 "claude-3-5-sonnet", "gpt-4o" 等） */
+  modelId: varchar("modelId", { length: 128 }),
+  /** 温度参数（0.0 - 2.0，默认 0.7） */
+  temperature: decimal("temperature", { precision: 3, scale: 2 }).default("0.70"),
+  /** 最大输出 Token 数（默认 2048） */
+  maxTokens: int("maxTokens").default(2048),
+  /** 是否启用工具调用（默认开启） */
+  enableTools: boolean("enableTools").default(true).notNull(),
+  /** 自定义系统 Prompt 追加内容（可选） */
+  customSystemPrompt: text("customSystemPrompt"),
+  createdAt: timestamp("createdAt").defaultNow().notNull(),
+  updatedAt: timestamp("updatedAt").defaultNow().onUpdateNow().notNull(),
+});
+export type AiAssistantSettings = typeof aiAssistantSettings.$inferSelect;
+export type InsertAiAssistantSettings = typeof aiAssistantSettings.$inferInsert;

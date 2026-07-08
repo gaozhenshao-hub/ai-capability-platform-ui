@@ -9,6 +9,8 @@ import { getDb } from "../db";
 import {
   aiAgentRuns,
   aiAuditLogs,
+  aiAssistantMessages,
+  aiAssistantSessions,
   aiKnowledgeItems,
   aiLlmModels,
   aiSkillCalls,
@@ -312,5 +314,63 @@ export const dashboardRouter = router({
         inputTokens: Number(r.inputTokens),
         outputTokens: Number(r.outputTokens),
       }));
+    }),
+
+  // ─── AI 助手 Token 用量统计 ─────────────────────────────────────────────────────
+  getAssistantStats: protectedProcedure
+    .input(z.object({ range: z.enum(["7d", "30d"]).default("7d") }))
+    .query(async ({ input }) => {
+      const db = await getDb();
+      if (!db) return { overview: null, trend: [] };
+      const { from } = getTimeRange(input.range);
+
+      // 总览卡片：总对话数 / 总消息数 / 总 Token
+      const [overview] = await db
+        .select({
+          totalSessions: count(aiAssistantSessions.id),
+          totalMessages: sql<number>`COALESCE(SUM(${aiAssistantSessions.messageCount}), 0)`,
+        })
+        .from(aiAssistantSessions)
+        .where(gte(aiAssistantSessions.createdAt, from));
+
+      const [tokenStats] = await db
+        .select({
+          totalInputTokens: sql<number>`COALESCE(SUM(${aiAssistantMessages.inputTokens}), 0)`,
+          totalOutputTokens: sql<number>`COALESCE(SUM(${aiAssistantMessages.outputTokens}), 0)`,
+        })
+        .from(aiAssistantMessages)
+        .where(gte(aiAssistantMessages.createdAt, from));
+
+      // 按天分组的 Token 趋势
+      const trendFmt = sql.raw("'%Y-%m-%d'");
+      const trend = await db
+        .select({
+          day: sql<string>`DATE_FORMAT(${aiAssistantMessages.createdAt}, ${trendFmt})`,
+          inputTokens: sql<number>`COALESCE(SUM(${aiAssistantMessages.inputTokens}), 0)`,
+          outputTokens: sql<number>`COALESCE(SUM(${aiAssistantMessages.outputTokens}), 0)`,
+          messages: count(),
+        })
+        .from(aiAssistantMessages)
+        .where(and(
+          gte(aiAssistantMessages.createdAt, from),
+          eq(aiAssistantMessages.role, "assistant"),
+        ))
+        .groupBy(sql`DATE_FORMAT(${aiAssistantMessages.createdAt}, ${trendFmt})`)
+        .orderBy(sql`DATE_FORMAT(${aiAssistantMessages.createdAt}, ${trendFmt})`);
+
+      return {
+        overview: {
+          totalSessions: overview?.totalSessions ?? 0,
+          totalMessages: Number(overview?.totalMessages ?? 0),
+          totalInputTokens: Number(tokenStats?.totalInputTokens ?? 0),
+          totalOutputTokens: Number(tokenStats?.totalOutputTokens ?? 0),
+        },
+        trend: trend.map(r => ({
+          day: r.day,
+          inputTokens: Number(r.inputTokens),
+          outputTokens: Number(r.outputTokens),
+          messages: r.messages,
+        })),
+      };
     }),
 });

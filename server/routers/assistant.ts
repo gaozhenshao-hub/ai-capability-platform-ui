@@ -16,7 +16,9 @@ import {
   aiKnowledgeItems,
   aiAssistantSessions,
   aiAssistantMessages,
+  aiAssistantSettings,
 } from "../../drizzle/schema";
+import { listLLMModels } from "../_core/llm";
 
 // ─── 平台系统 Prompt ────────────────────────────────────────────────────────
 const SYSTEM_PROMPT = `你是"AI 能力平台"的内置助手，专门帮助亚马逊运营人员使用本平台。
@@ -260,16 +262,29 @@ async function executeTool(name: string, args: Record<string, unknown>, userId: 
 }
 
 // ─── 核心 LLM 对话逻辑（可复用）────────────────────────────────────────────
+type AssistantSettingsLike = {
+  modelId?: string | null;
+  temperature?: string | null;
+  maxTokens?: number | null;
+  enableTools?: boolean;
+  customSystemPrompt?: string | null;
+};
+
 async function runChatCompletion(
   inputMessages: { role: "user" | "assistant" | "system"; content: string }[],
   agentId: number | undefined,
   context: string | undefined,
-  userId: number
+  userId: number,
+  settings?: AssistantSettingsLike | null
 ) {
   const db = await getDb();
 
   // 构建系统 Prompt（注入上下文）
   let systemPrompt = SYSTEM_PROMPT;
+  // 附加用户自定义 Prompt
+  if (settings?.customSystemPrompt) {
+    systemPrompt += `\n\n## 用户自定义补充说明\n${settings.customSystemPrompt}`;
+  }
   if (agentId && db) {
     const [agent] = await db
       .select({ name: aiAgents.name, description: aiAgents.description, workflowJson: aiAgents.workflowJson })
@@ -296,11 +311,18 @@ async function runChatCompletion(
     ...inputMessages,
   ];
 
+  // 解析用户设置的模型参数
+  const useModel = settings?.modelId || undefined;
+  const useMaxTokens = settings?.maxTokens || undefined;
+  const useTools = settings?.enableTools !== false;
+
   // 第一轮 LLM 调用（带工具）
   let response = await invokeLLM({
     messages,
-    tools: ASSISTANT_TOOLS,
-    tool_choice: "auto",
+    ...(useModel ? { model: useModel } : {}),
+    ...(useMaxTokens ? { maxTokens: useMaxTokens } : {}),
+    tools: useTools ? ASSISTANT_TOOLS : undefined,
+    tool_choice: useTools ? "auto" : undefined,
   });
 
   // 处理工具调用（最多 3 轮）
@@ -330,8 +352,10 @@ async function runChatCompletion(
 
     response = await invokeLLM({
       messages: messages as Parameters<typeof invokeLLM>[0]["messages"],
-      tools: ASSISTANT_TOOLS,
-      tool_choice: "auto",
+      ...(useModel ? { model: useModel } : {}),
+      ...(useMaxTokens ? { maxTokens: useMaxTokens } : {}),
+      tools: useTools ? ASSISTANT_TOOLS : undefined,
+      tool_choice: useTools ? "auto" : undefined,
     });
     rounds++;
   }
@@ -556,12 +580,24 @@ export const assistantRouter = router({
         .filter((m) => m.role === "user" || m.role === "assistant")
         .map((m) => ({ role: m.role as "user" | "assistant", content: m.content }));
 
+      // 加载用户的 AI 助手设置
+      let userSettings: AssistantSettingsLike | null = null;
+      if (db) {
+        const [s] = await db
+          .select()
+          .from(aiAssistantSettings)
+          .where(eq(aiAssistantSettings.userId, ctx.user.id))
+          .limit(1);
+        userSettings = s ?? null;
+      }
+
       // 调用 LLM
       const { content, usage } = await runChatCompletion(
         llmMessages,
         input.agentId,
         input.context,
-        ctx.user.id
+        ctx.user.id,
+        userSettings
       );
 
       // 保存 AI 回复消息
@@ -772,4 +808,91 @@ ${skillList}
         };
       }
     }),
+
+  // ─── 获取当前用户的 AI 助手设置 ───────────────────────────────────────────────────────────────────
+  getSettings: protectedProcedure.query(async ({ ctx }) => {
+    const db = await getDb();
+    if (!db) return null;
+
+    const [settings] = await db
+      .select()
+      .from(aiAssistantSettings)
+      .where(eq(aiAssistantSettings.userId, ctx.user.id))
+      .limit(1);
+
+    // 返回设置，如果没有则返回默认展示值
+    return settings ?? {
+      id: 0,
+      userId: ctx.user.id,
+      modelId: null,
+      temperature: "0.70",
+      maxTokens: 2048,
+      enableTools: true,
+      customSystemPrompt: null,
+      createdAt: new Date(),
+      updatedAt: new Date(),
+    };
+  }),
+
+  // ─── 保存 AI 助手设置 ───────────────────────────────────────────────────────────────────
+  updateSettings: protectedProcedure
+    .input(
+      z.object({
+        modelId: z.string().max(128).nullable().optional(),
+        temperature: z.number().min(0).max(2).optional(),
+        maxTokens: z.number().min(256).max(8192).optional(),
+        enableTools: z.boolean().optional(),
+        customSystemPrompt: z.string().max(2000).nullable().optional(),
+      })
+    )
+    .mutation(async ({ input, ctx }) => {
+      const db = await getDb();
+      if (!db) throw new Error("数据库连接失败");
+
+      // 检查是否已有设置
+      const [existing] = await db
+        .select({ id: aiAssistantSettings.id })
+        .from(aiAssistantSettings)
+        .where(eq(aiAssistantSettings.userId, ctx.user.id))
+        .limit(1);
+
+      const updateData: Record<string, unknown> = {};
+      if (input.modelId !== undefined) updateData.modelId = input.modelId;
+      if (input.temperature !== undefined) updateData.temperature = input.temperature.toFixed(2);
+      if (input.maxTokens !== undefined) updateData.maxTokens = input.maxTokens;
+      if (input.enableTools !== undefined) updateData.enableTools = input.enableTools;
+      if (input.customSystemPrompt !== undefined) updateData.customSystemPrompt = input.customSystemPrompt;
+
+      if (existing) {
+        await db
+          .update(aiAssistantSettings)
+          .set(updateData)
+          .where(eq(aiAssistantSettings.userId, ctx.user.id));
+      } else {
+        await db.insert(aiAssistantSettings).values({
+          userId: ctx.user.id,
+          modelId: (input.modelId as string | null) ?? null,
+          temperature: input.temperature !== undefined ? input.temperature.toFixed(2) : "0.70",
+          maxTokens: input.maxTokens ?? 2048,
+          enableTools: input.enableTools ?? true,
+          customSystemPrompt: (input.customSystemPrompt as string | null) ?? null,
+        });
+      }
+
+      return { success: true };
+    }),
+
+  // ─── 列出可用的 LLM 模型 ───────────────────────────────────────────────────────────────────
+  listAvailableModels: protectedProcedure.query(async () => {
+    try {
+      const { data } = await listLLMModels();
+      return data.map(m => ({
+        id: m.id,
+        name: m.id,
+        ownedBy: m.owned_by,
+      }));
+    } catch {
+      return [];
+    }
+  }),
 });

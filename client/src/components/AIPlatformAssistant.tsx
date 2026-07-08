@@ -2,11 +2,12 @@
  * AIPlatformAssistant — 平台内置 AI 助手浮动聊天组件
  * 支持多轮对话、工具调用、Markdown 渲染、快捷操作
  * Phase 6.2 升级：会话历史持久化，刷新页面后对话上下文不丢失
+ * Phase 6.3 升级：LLM 大模型设置面板（模型选择 + 参数调整）
  */
 import { useState, useRef, useEffect, useCallback } from "react";
 import {
   Bot, X, Send, Loader2, Sparkles, Zap, Plus, ChevronDown,
-  History, Trash2, MessageSquare, ChevronLeft, PenLine,
+  History, Trash2, MessageSquare, ChevronLeft, PenLine, Settings, Save, RotateCcw,
 } from "lucide-react";
 import { trpc } from "@/lib/trpc";
 import { toast } from "sonner";
@@ -210,10 +211,229 @@ function SessionListPanel({ currentSessionId, onSelectSession, onNewSession, onC
   );
 }
 
+// ─── LLM 设置面板 ────────────────────────────────────────────────────────────
+interface SettingsPanelProps {
+  onClose: () => void;
+}
+
+function SettingsPanel({ onClose }: SettingsPanelProps) {
+  const utils = trpc.useUtils();
+  const { data: currentSettings, isLoading: settingsLoading } = trpc.assistant.getSettings.useQuery();
+  const { data: models = [], isLoading: modelsLoading } = trpc.assistant.listAvailableModels.useQuery();
+
+  const [modelId, setModelId] = useState<string>("");
+  const [temperature, setTemperature] = useState<string>("0.7");
+  const [maxTokens, setMaxTokens] = useState<string>("2048");
+  const [enableTools, setEnableTools] = useState<boolean>(true);
+  const [customSystemPrompt, setCustomSystemPrompt] = useState<string>("");
+  const [initialized, setInitialized] = useState(false);
+
+  // 从服务端加载设置
+  useEffect(() => {
+    if (currentSettings && !initialized) {
+      setModelId(currentSettings.modelId ?? "");
+      setTemperature(currentSettings.temperature ?? "0.70");
+      setMaxTokens(String(currentSettings.maxTokens ?? 2048));
+      setEnableTools(currentSettings.enableTools ?? true);
+      setCustomSystemPrompt(currentSettings.customSystemPrompt ?? "");
+      setInitialized(true);
+    }
+  }, [currentSettings, initialized]);
+
+  const updateSettingsMutation = trpc.assistant.updateSettings.useMutation({
+    onSuccess: () => {
+      toast.success("设置已保存");
+      utils.assistant.getSettings.invalidate();
+      onClose();
+    },
+    onError: (e) => toast.error(`保存失败：${e.message}`),
+  });
+
+  const handleSave = () => {
+    const tempNum = parseFloat(temperature);
+    const tokensNum = parseInt(maxTokens, 10);
+    if (isNaN(tempNum) || tempNum < 0 || tempNum > 2) {
+      toast.error("Temperature 必须在 0 ~ 2 之间");
+      return;
+    }
+    if (isNaN(tokensNum) || tokensNum < 256 || tokensNum > 8192) {
+      toast.error("最大 Token 数必须在 256 ~ 8192 之间");
+      return;
+    }
+    updateSettingsMutation.mutate({
+      modelId: modelId || null,
+      temperature: tempNum,
+      maxTokens: tokensNum,
+      enableTools,
+      customSystemPrompt: customSystemPrompt.trim() || null,
+    });
+  };
+
+  const handleReset = () => {
+    setModelId("");
+    setTemperature("0.70");
+    setMaxTokens("2048");
+    setEnableTools(true);
+    setCustomSystemPrompt("");
+  };
+
+  const isLoading = settingsLoading || modelsLoading;
+
+  return (
+    <div className="flex flex-col h-full">
+      {/* 顶部 */}
+      <div className="flex items-center justify-between px-4 py-3 border-b border-zinc-700 flex-shrink-0">
+        <div className="flex items-center gap-2">
+          <Settings className="w-4 h-4 text-zinc-400" />
+          <span className="text-sm font-semibold text-white">AI 助手设置</span>
+        </div>
+        <button
+          onClick={onClose}
+          className="text-zinc-400 hover:text-zinc-200 p-1 rounded hover:bg-zinc-700 transition-colors"
+        >
+          <ChevronLeft className="w-4 h-4" />
+        </button>
+      </div>
+
+      {/* 设置内容 */}
+      <div className="flex-1 overflow-y-auto p-4 space-y-5">
+        {isLoading ? (
+          <div className="flex items-center justify-center py-12">
+            <Loader2 className="w-5 h-5 animate-spin text-zinc-500" />
+          </div>
+        ) : (
+          <>
+            {/* 模型选择 */}
+            <div className="space-y-2">
+              <label className="text-xs font-medium text-zinc-300">LLM 模型</label>
+              <select
+                value={modelId}
+                onChange={(e) => setModelId(e.target.value)}
+                className="w-full bg-zinc-800 border border-zinc-700 text-zinc-100 text-sm rounded-lg px-3 py-2 focus:outline-none focus:ring-1 focus:ring-blue-500 focus:border-blue-500"
+              >
+                <option value="">系统默认模型</option>
+                {models.map((m) => (
+                  <option key={m.id} value={m.id}>{m.id}</option>
+                ))}
+              </select>
+              <p className="text-xs text-zinc-500">选择 AI 助手使用的语言模型，留空则使用系统默认模型</p>
+            </div>
+
+            {/* Temperature */}
+            <div className="space-y-2">
+              <div className="flex items-center justify-between">
+                <label className="text-xs font-medium text-zinc-300">Temperature（创造性）</label>
+                <span className="text-xs text-blue-400 font-mono">{temperature}</span>
+              </div>
+              <input
+                type="range"
+                min="0"
+                max="2"
+                step="0.1"
+                value={parseFloat(temperature) || 0.7}
+                onChange={(e) => setTemperature(parseFloat(e.target.value).toFixed(1))}
+                className="w-full accent-blue-500"
+              />
+              <div className="flex justify-between text-xs text-zinc-600">
+                <span>0 精确</span>
+                <span>1 平衡</span>
+                <span>2 创意</span>
+              </div>
+              <p className="text-xs text-zinc-500">较低值输出更稳定，较高值输出更有创意</p>
+            </div>
+
+            {/* Max Tokens */}
+            <div className="space-y-2">
+              <label className="text-xs font-medium text-zinc-300">最大输出 Token 数</label>
+              <input
+                type="number"
+                min={256}
+                max={8192}
+                step={256}
+                value={maxTokens}
+                onChange={(e) => setMaxTokens(e.target.value)}
+                className="w-full bg-zinc-800 border border-zinc-700 text-zinc-100 text-sm rounded-lg px-3 py-2 focus:outline-none focus:ring-1 focus:ring-blue-500 focus:border-blue-500"
+              />
+              <p className="text-xs text-zinc-500">范围 256 ~ 8192，建议 2048（默认）</p>
+            </div>
+
+            {/* 工具调用开关 */}
+            <div className="flex items-center justify-between py-2 border-t border-zinc-700/50">
+              <div>
+                <p className="text-xs font-medium text-zinc-300">启用工具调用</p>
+                <p className="text-xs text-zinc-500 mt-0.5">允许 AI 助手查询平台数据（Skill 列表、Agent 状态等）</p>
+              </div>
+              <button
+                onClick={() => setEnableTools((v) => !v)}
+                className={cn(
+                  "relative inline-flex h-5 w-9 items-center rounded-full transition-colors flex-shrink-0",
+                  enableTools ? "bg-blue-600" : "bg-zinc-600"
+                )}
+              >
+                <span
+                  className={cn(
+                    "inline-block h-3.5 w-3.5 rounded-full bg-white shadow transition-transform",
+                    enableTools ? "translate-x-4" : "translate-x-0.5"
+                  )}
+                />
+              </button>
+            </div>
+
+            {/* 自定义系统 Prompt */}
+            <div className="space-y-2">
+              <label className="text-xs font-medium text-zinc-300">自定义补充说明（可选）</label>
+              <textarea
+                value={customSystemPrompt}
+                onChange={(e) => setCustomSystemPrompt(e.target.value)}
+                placeholder="在此输入对 AI 助手的额外说明，例如：请重点关注广告优化相关问题..."
+                rows={4}
+                maxLength={2000}
+                className="w-full bg-zinc-800 border border-zinc-700 text-zinc-100 text-xs rounded-lg px-3 py-2 focus:outline-none focus:ring-1 focus:ring-blue-500 focus:border-blue-500 resize-none placeholder:text-zinc-600"
+              />
+              <div className="flex justify-between text-xs text-zinc-600">
+                <span>将追加到系统 Prompt 末尾</span>
+                <span>{customSystemPrompt.length}/2000</span>
+              </div>
+            </div>
+          </>
+        )}
+      </div>
+
+      {/* 底部操作按钮 */}
+      <div className="px-4 py-3 border-t border-zinc-700 flex-shrink-0 flex gap-2">
+        <button
+          onClick={handleReset}
+          className="flex items-center gap-1.5 px-3 py-2 text-xs text-zinc-400 hover:text-zinc-200 bg-zinc-800 hover:bg-zinc-700 rounded-lg transition-colors"
+        >
+          <RotateCcw className="w-3 h-3" />
+          恢复默认
+        </button>
+        <button
+          onClick={handleSave}
+          disabled={updateSettingsMutation.isPending}
+          className={cn(
+            "flex-1 flex items-center justify-center gap-1.5 px-3 py-2 text-xs font-medium rounded-lg transition-all",
+            "bg-blue-600 hover:bg-blue-500 text-white",
+            "disabled:opacity-50 disabled:cursor-not-allowed"
+          )}
+        >
+          {updateSettingsMutation.isPending ? (
+            <Loader2 className="w-3 h-3 animate-spin" />
+          ) : (
+            <Save className="w-3 h-3" />
+          )}
+          保存设置
+        </button>
+      </div>
+    </div>
+  );
+}
+
 // ─── 主组件 ──────────────────────────────────────────────────────────────────
 export function AIPlatformAssistant({ agentId, context }: AIPlatformAssistantProps) {
   const [isOpen, setIsOpen] = useState(false);
   const [showHistory, setShowHistory] = useState(false);
+  const [showSettings, setShowSettings] = useState(false);
 
   // 当前会话 ID（null = 尚未创建）
   const [currentSessionId, setCurrentSessionId] = useState<number | null>(null);
@@ -262,8 +482,8 @@ export function AIPlatformAssistant({ agentId, context }: AIPlatformAssistantPro
   const loadSessionMessages = useCallback(async (sessionId: number) => {
     setIsLoadingHistory(true);
     setShowHistory(false);
+    setShowSettings(false);
     try {
-      // 使用 utils 直接 fetch（不用 useQuery，因为需要命令式调用）
       const result = await utils.assistant.getSessionMessages.fetch({ sessionId });
       if (result.messages.length > 0) {
         const loadedMessages: Message[] = result.messages
@@ -291,17 +511,17 @@ export function AIPlatformAssistant({ agentId, context }: AIPlatformAssistantPro
 
   // 自动滚动到底部
   useEffect(() => {
-    if (isOpen) {
+    if (isOpen && !showHistory && !showSettings) {
       messagesEndRef.current?.scrollIntoView({ behavior: "smooth" });
     }
-  }, [messages, isOpen]);
+  }, [messages, isOpen, showHistory, showSettings]);
 
   // 打开时聚焦输入框
   useEffect(() => {
-    if (isOpen && !showHistory) {
+    if (isOpen && !showHistory && !showSettings) {
       setTimeout(() => inputRef.current?.focus(), 100);
     }
-  }, [isOpen, showHistory]);
+  }, [isOpen, showHistory, showSettings]);
 
   const sendMessage = useCallback(
     async (text: string) => {
@@ -330,7 +550,6 @@ export function AIPlatformAssistant({ agentId, context }: AIPlatformAssistantPro
         // 如果是新会话，记录 sessionId
         if (!currentSessionId && result.sessionId) {
           setCurrentSessionId(result.sessionId);
-          // 刷新历史列表
           utils.assistant.listSessions.invalidate();
         }
 
@@ -370,6 +589,7 @@ export function AIPlatformAssistant({ agentId, context }: AIPlatformAssistantPro
     ]);
     setShowQuickActions(true);
     setShowHistory(false);
+    setShowSettings(false);
     setEditingTitle(false);
   };
 
@@ -426,6 +646,9 @@ export function AIPlatformAssistant({ agentId, context }: AIPlatformAssistantPro
               onNewSession={startNewSession}
               onClose={() => setShowHistory(false)}
             />
+          ) : showSettings ? (
+            /* ── 设置面板 ── */
+            <SettingsPanel onClose={() => setShowSettings(false)} />
           ) : (
             /* ── 聊天面板 ── */
             <>
@@ -465,6 +688,14 @@ export function AIPlatformAssistant({ agentId, context }: AIPlatformAssistantPro
                   </div>
                 </div>
                 <div className="flex items-center gap-1 flex-shrink-0">
+                  {/* 设置按钮 */}
+                  <button
+                    onClick={() => setShowSettings(true)}
+                    className="text-zinc-400 hover:text-zinc-200 p-1.5 rounded hover:bg-zinc-700 transition-colors"
+                    title="AI 助手设置"
+                  >
+                    <Settings className="w-4 h-4" />
+                  </button>
                   {/* 历史记录按钮 */}
                   <button
                     onClick={() => setShowHistory(true)}

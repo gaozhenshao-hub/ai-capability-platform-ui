@@ -41,6 +41,13 @@ vi.mock("./_core/llm", () => ({
     ],
     usage: { prompt_tokens: 100, completion_tokens: 200 },
   }),
+  listLLMModels: vi.fn().mockResolvedValue({
+    object: "list",
+    data: [
+      { id: "gpt-4o", object: "model", created: 0, owned_by: "openai" },
+      { id: "claude-3-5-sonnet", object: "model", created: 0, owned_by: "anthropic" },
+    ],
+  }),
 }));
 
 import { appRouter } from "./routers";
@@ -333,6 +340,14 @@ describe("assistantRouter", () => {
           }),
         }),
       });
+      // 加载用户设置（返回空数组 → 走默认分支）
+      mockSelect.mockReturnValueOnce({
+        from: vi.fn().mockReturnValue({
+          where: vi.fn().mockReturnValue({
+            limit: vi.fn().mockResolvedValue([]),
+          }),
+        }),
+      });
       // 保存 AI 回复
       mockInsert.mockReturnValueOnce({ values: vi.fn().mockResolvedValue([]) });
       // 更新会话元数据
@@ -366,6 +381,14 @@ describe("assistantRouter", () => {
                 { id: 3, sessionId: 1, role: "user", content: "继续问", createdAt: new Date() },
               ]),
             }),
+          }),
+        }),
+      });
+      // 加载用户设置（返回空数组 → 走默认分支）
+      mockSelect.mockReturnValueOnce({
+        from: vi.fn().mockReturnValue({
+          where: vi.fn().mockReturnValue({
+            limit: vi.fn().mockResolvedValue([]),
           }),
         }),
       });
@@ -509,6 +532,186 @@ describe("assistantRouter", () => {
       await expect(
         caller.assistant.recommendSkills({ taskDescription: "优化" })
       ).rejects.toThrow();
+    });
+  });
+});
+
+// ─── Settings & Model Tests (Phase 6.3) ──────────────────────────────────────
+describe("assistant settings & model", () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+  });
+
+  // ── getSettings ─────────────────────────────────────────────────────────────
+  describe("getSettings", () => {
+    it("无设置记录时应返回默认值", async () => {
+      // 查询返回空数组 → 走默认值分支
+      mockSelect.mockReturnValueOnce({
+        from: vi.fn().mockReturnValue({
+          where: vi.fn().mockReturnValue({
+            limit: vi.fn().mockResolvedValue([]),
+          }),
+        }),
+      });
+
+      const caller = appRouter.createCaller(createCtx());
+      const result = await caller.assistant.getSettings();
+
+      expect(result.modelId).toBeNull();
+      expect(result.temperature).toBe("0.70");
+      expect(result.maxTokens).toBe(2048);
+      expect(result.enableTools).toBe(true);
+      expect(result.customSystemPrompt).toBeNull();
+    });
+
+    it("有设置记录时应返回存储的值", async () => {
+      const storedSettings = {
+        id: 1,
+        userId: 1,
+        modelId: "gpt-4o",
+        temperature: "1.20",
+        maxTokens: 4096,
+        enableTools: false,
+        customSystemPrompt: "请专注于广告优化",
+        createdAt: new Date(),
+        updatedAt: new Date(),
+      };
+
+      mockSelect.mockReturnValueOnce({
+        from: vi.fn().mockReturnValue({
+          where: vi.fn().mockReturnValue({
+            limit: vi.fn().mockResolvedValue([storedSettings]),
+          }),
+        }),
+      });
+
+      const caller = appRouter.createCaller(createCtx());
+      const result = await caller.assistant.getSettings();
+
+      expect(result.modelId).toBe("gpt-4o");
+      expect(result.temperature).toBe("1.20");
+      expect(result.maxTokens).toBe(4096);
+      expect(result.enableTools).toBe(false);
+      expect(result.customSystemPrompt).toBe("请专注于广告优化");
+    });
+
+    it("未登录用户应被拒绝访问", async () => {
+      const caller = appRouter.createCaller({
+        user: null,
+        req: { protocol: "https", headers: {} } as TrpcContext["req"],
+        res: { clearCookie: vi.fn() } as unknown as TrpcContext["res"],
+      });
+      await expect(caller.assistant.getSettings()).rejects.toThrow();
+    });
+  });
+
+  // ── updateSettings ──────────────────────────────────────────────────────────
+  describe("updateSettings", () => {
+    it("应成功保存设置（upsert 路径）", async () => {
+      // 查询现有设置 → 空（走 insert 分支）
+      mockSelect.mockReturnValueOnce({
+        from: vi.fn().mockReturnValue({
+          where: vi.fn().mockReturnValue({
+            limit: vi.fn().mockResolvedValue([]),
+          }),
+        }),
+      });
+      mockInsert.mockReturnValueOnce({ values: vi.fn().mockResolvedValue([]) });
+
+      const caller = appRouter.createCaller(createCtx());
+      const result = await caller.assistant.updateSettings({
+        modelId: "claude-3-5-sonnet",
+        temperature: 0.8,
+        maxTokens: 3000,
+        enableTools: true,
+        customSystemPrompt: null,
+      });
+
+      expect(result.success).toBe(true);
+    });
+
+    it("已有设置时应走 update 分支", async () => {
+      // 查询现有设置 → 有记录（走 update 分支）
+      mockSelect.mockReturnValueOnce({
+        from: vi.fn().mockReturnValue({
+          where: vi.fn().mockReturnValue({
+            limit: vi.fn().mockResolvedValue([{
+              id: 1, userId: 1, modelId: null, temperature: "0.70",
+              maxTokens: 2048, enableTools: true, customSystemPrompt: null,
+              createdAt: new Date(), updatedAt: new Date(),
+            }]),
+          }),
+        }),
+      });
+
+      const caller = appRouter.createCaller(createCtx());
+      const result = await caller.assistant.updateSettings({
+        modelId: "gpt-4o-mini",
+        temperature: 0.5,
+        maxTokens: 1024,
+        enableTools: false,
+        customSystemPrompt: "专注于库存分析",
+      });
+
+      expect(result.success).toBe(true);
+      expect(mockUpdate).toHaveBeenCalled();
+    });
+
+    it("temperature 超出范围时应抛出验证错误", async () => {
+      const caller = appRouter.createCaller(createCtx());
+      await expect(
+        caller.assistant.updateSettings({
+          modelId: null,
+          temperature: 3.0, // 超出 0~2 范围
+          maxTokens: 2048,
+          enableTools: true,
+          customSystemPrompt: null,
+        })
+      ).rejects.toThrow();
+    });
+
+    it("maxTokens 超出范围时应抛出验证错误", async () => {
+      const caller = appRouter.createCaller(createCtx());
+      await expect(
+        caller.assistant.updateSettings({
+          modelId: null,
+          temperature: 0.7,
+          maxTokens: 100, // 低于最小值 256
+          enableTools: true,
+          customSystemPrompt: null,
+        })
+      ).rejects.toThrow();
+    });
+  });
+
+  // ── listAvailableModels ─────────────────────────────────────────────────────
+  describe("listAvailableModels", () => {
+    it("应返回模型列表", async () => {
+      const { listLLMModels } = await import("./_core/llm");
+      vi.mocked(listLLMModels).mockResolvedValueOnce({
+        object: "list",
+        data: [
+          { id: "gpt-4o", object: "model", created: 0, owned_by: "openai" },
+          { id: "claude-3-5-sonnet", object: "model", created: 0, owned_by: "anthropic" },
+        ],
+      });
+
+      const caller = appRouter.createCaller(createCtx());
+      const result = await caller.assistant.listAvailableModels();
+
+      expect(Array.isArray(result)).toBe(true);
+      expect(result.length).toBeGreaterThanOrEqual(0);
+    });
+
+    it("listLLMModels 抛出错误时应返回空数组", async () => {
+      const { listLLMModels } = await import("./_core/llm");
+      vi.mocked(listLLMModels).mockRejectedValueOnce(new Error("API 不可用"));
+
+      const caller = appRouter.createCaller(createCtx());
+      const result = await caller.assistant.listAvailableModels();
+
+      expect(Array.isArray(result)).toBe(true);
+      expect(result.length).toBe(0);
     });
   });
 });

@@ -15,6 +15,13 @@
       "when": 1783505554551,
       "tag": "0001_magenta_leper_queen",
       "breakpoints": true
+    },
+    {
+      "idx": 2,
+      "version": "5",
+      "when": 1783506718750,
+      "tag": "0002_slippery_kree",
+      "breakpoints": true
     }
   ]
 }

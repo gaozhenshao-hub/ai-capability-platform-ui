@@ -11,7 +11,7 @@ import {
 import {
   Activity, Zap, Bot, BookOpen,
   AlertTriangle, Clock, CheckCircle, XCircle, Loader2, RefreshCw,
-  DollarSign,
+  DollarSign, MessageSquare, TrendingUp,
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
@@ -67,6 +67,7 @@ function HealthBadge({ status }: { status: string }) {
 export default function Dashboard() {
   const [range, setRange] = useState<"24h" | "7d" | "30d">("7d");
   const [costRange, setCostRange] = useState<"7d" | "30d">("30d");
+  const [assistantRange, setAssistantRange] = useState<"7d" | "30d">("7d");
 
   const { data: overview, isLoading: overviewLoading, refetch: refetchOverview } = trpc.dashboard.getOverview.useQuery({ range });
   const { data: callTrend = [], isLoading: trendLoading } = trpc.dashboard.getCallTrend.useQuery({ range });
@@ -75,9 +76,11 @@ export default function Dashboard() {
   const { data: recentRuns = [] } = trpc.dashboard.getRecentAgentRuns.useQuery({ limit: 10 });
   const { data: health, refetch: refetchHealth } = trpc.dashboard.getSystemHealth.useQuery();
   const { data: costData = [] } = trpc.dashboard.getCostAnalysis.useQuery({ range: costRange });
+  const { data: assistantStats } = trpc.dashboard.getAssistantStats.useQuery({ range: assistantRange });
 
   const handleRefresh = () => { refetchOverview(); refetchHealth(); };
   const totalModelCalls = modelDist.reduce((s, m) => s + m.calls, 0);
+  const assistantTotalTokens = (assistantStats?.overview?.totalInputTokens ?? 0) + (assistantStats?.overview?.totalOutputTokens ?? 0);
 
   return (
     <div className="min-h-screen bg-[#080b12] text-white p-6 space-y-6">
@@ -264,6 +267,79 @@ export default function Dashboard() {
             </div>
           )}
         </div>
+      </div>
+
+      {/* AI 助手 Token 用量统计面板 */}
+      <div className="rounded-2xl border border-white/8 bg-[#0d1117] p-5">
+        <div className="flex items-center justify-between mb-4">
+          <div className="flex items-center gap-2">
+            <div className="rounded-lg p-1.5 bg-purple-500/20">
+              <MessageSquare className="h-4 w-4 text-purple-400" />
+            </div>
+            <h3 className="text-sm font-semibold text-white">AI 助手 Token 用量统计</h3>
+          </div>
+          <Tabs value={assistantRange} onValueChange={v => setAssistantRange(v as typeof assistantRange)}>
+            <TabsList className="bg-[#0a0d14] border border-white/10 h-7">
+              {(["7d", "30d"] as const).map(r => (
+                <TabsTrigger key={r} value={r} className="text-xs h-5 px-2.5 data-[state=active]:bg-purple-600 data-[state=active]:text-white">{r}</TabsTrigger>
+              ))}
+            </TabsList>
+          </Tabs>
+        </div>
+
+        {/* 总览卡片行 */}
+        <div className="grid grid-cols-2 lg:grid-cols-4 gap-3 mb-5">
+          <div className="rounded-xl bg-[#0a0d14] border border-white/5 p-3">
+            <p className="text-xs text-slate-500 mb-1">对话总数</p>
+            <p className="text-xl font-bold text-white">{assistantStats?.overview?.totalSessions?.toLocaleString() ?? "0"}</p>
+          </div>
+          <div className="rounded-xl bg-[#0a0d14] border border-white/5 p-3">
+            <p className="text-xs text-slate-500 mb-1">消息总数</p>
+            <p className="text-xl font-bold text-white">{assistantStats?.overview?.totalMessages?.toLocaleString() ?? "0"}</p>
+          </div>
+          <div className="rounded-xl bg-[#0a0d14] border border-white/5 p-3">
+            <p className="text-xs text-slate-500 mb-1">输入 Token</p>
+            <p className="text-xl font-bold text-purple-400">{((assistantStats?.overview?.totalInputTokens ?? 0) / 1000).toFixed(1)}K</p>
+          </div>
+          <div className="rounded-xl bg-[#0a0d14] border border-white/5 p-3">
+            <p className="text-xs text-slate-500 mb-1">输出 Token</p>
+            <p className="text-xl font-bold text-cyan-400">{((assistantStats?.overview?.totalOutputTokens ?? 0) / 1000).toFixed(1)}K</p>
+          </div>
+        </div>
+
+        {/* Token 趋势图 */}
+        {!assistantStats?.trend?.length ? (
+          <div className="h-36 flex items-center justify-center text-slate-600 text-sm">暂无对话数据，开始使用 AI 助手后将在此显示统计</div>
+        ) : (
+          <>
+            <ResponsiveContainer width="100%" height={160}>
+              <AreaChart data={assistantStats.trend} margin={{ top: 5, right: 5, left: -20, bottom: 0 }}>
+                <defs>
+                  <linearGradient id="inputGrad" x1="0" y1="0" x2="0" y2="1">
+                    <stop offset="5%" stopColor={CHART_COLORS.purple} stopOpacity={0.35} />
+                    <stop offset="95%" stopColor={CHART_COLORS.purple} stopOpacity={0} />
+                  </linearGradient>
+                  <linearGradient id="outputGrad" x1="0" y1="0" x2="0" y2="1">
+                    <stop offset="5%" stopColor={CHART_COLORS.cyan} stopOpacity={0.35} />
+                    <stop offset="95%" stopColor={CHART_COLORS.cyan} stopOpacity={0} />
+                  </linearGradient>
+                </defs>
+                <CartesianGrid strokeDasharray="3 3" stroke="rgba(255,255,255,0.05)" />
+                <XAxis dataKey="day" tick={{ fontSize: 10, fill: "#64748b" }} />
+                <YAxis tick={{ fontSize: 10, fill: "#64748b" }} tickFormatter={(v: number) => v >= 1000 ? `${(v/1000).toFixed(1)}K` : String(v)} />
+                <Tooltip content={<CustomTooltip />} />
+                <Legend wrapperStyle={{ fontSize: 11, color: "#94a3b8" }} />
+                <Area type="monotone" dataKey="inputTokens" name="输入 Token" stroke={CHART_COLORS.purple} fill="url(#inputGrad)" strokeWidth={2} />
+                <Area type="monotone" dataKey="outputTokens" name="输出 Token" stroke={CHART_COLORS.cyan} fill="url(#outputGrad)" strokeWidth={2} />
+              </AreaChart>
+            </ResponsiveContainer>
+            <div className="flex items-center gap-6 mt-3 text-xs text-slate-500">
+              <span>总 Token：<span className="text-purple-400 font-medium">{(assistantTotalTokens / 1000).toFixed(1)}K</span></span>
+              <span>输入：<span className="text-slate-300">{((assistantStats?.overview?.totalInputTokens ?? 0) / 1000).toFixed(1)}K</span></span>
+              <span>输出：<span className="text-slate-300">{((assistantStats?.overview?.totalOutputTokens ?? 0) / 1000).toFixed(1)}K</span></span>
+            </div>
+          </>
+        )}
       </div>
 
       <div className="rounded-2xl border border-white/8 bg-[#0d1117] p-5">
