@@ -1,6 +1,6 @@
 /**
  * Assistant Router — 平台内置 AI 助手
- * 支持流式对话 + 工具调用（查询 Skill/Agent/日志/知识库）
+ * 支持多轮对话 + 工具调用 + 会话历史持久化
  * 帮助用户了解平台功能、辅助配置 Agent、优化工作流
  */
 import { z } from "zod";
@@ -14,7 +14,8 @@ import {
   aiSkillCalls,
   aiSkills,
   aiKnowledgeItems,
-  aiLlmModels,
+  aiAssistantSessions,
+  aiAssistantMessages,
 } from "../../drizzle/schema";
 
 // ─── 平台系统 Prompt ────────────────────────────────────────────────────────
@@ -213,7 +214,7 @@ async function executeTool(name: string, args: Record<string, unknown>, userId: 
     case "search_knowledge": {
       const { query, collection } = args as { query: string; collection?: string };
       const conditions = [like(aiKnowledgeItems.content, `%${query}%`)];
-      if (collection) conditions.push(eq(aiKnowledgeItems.collection, collection));
+      if (collection) conditions.push(eq(aiKnowledgeItems.collection, collection) as unknown as ReturnType<typeof like>);
       const rows = await db
         .select({
           id: aiKnowledgeItems.id,
@@ -258,6 +259,95 @@ async function executeTool(name: string, args: Record<string, unknown>, userId: 
   }
 }
 
+// ─── 核心 LLM 对话逻辑（可复用）────────────────────────────────────────────
+async function runChatCompletion(
+  inputMessages: { role: "user" | "assistant" | "system"; content: string }[],
+  agentId: number | undefined,
+  context: string | undefined,
+  userId: number
+) {
+  const db = await getDb();
+
+  // 构建系统 Prompt（注入上下文）
+  let systemPrompt = SYSTEM_PROMPT;
+  if (agentId && db) {
+    const [agent] = await db
+      .select({ name: aiAgents.name, description: aiAgents.description, workflowJson: aiAgents.workflowJson })
+      .from(aiAgents)
+      .where(eq(aiAgents.id, agentId))
+      .limit(1);
+    if (agent) {
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      const workflow = (agent.workflowJson ?? null) as any;
+      const nodeCount = workflow?.nodes?.length ?? 0;
+      systemPrompt += `\n\n## 当前编辑的 Agent 上下文
+- **Agent 名称**: ${agent.name}
+- **描述**: ${agent.description ?? "无"}
+- **节点数量**: ${nodeCount}
+- **工作流结构**: ${nodeCount > 0 ? JSON.stringify(workflow?.nodes?.map((n: { type: string; data?: { label?: string } }) => ({ type: n.type, label: n.data?.label }))) : "空画布"}`;
+    }
+  }
+  if (context) {
+    systemPrompt += `\n\n## 用户当前操作上下文\n${context}`;
+  }
+
+  const messages: { role: "system" | "user" | "assistant"; content: string }[] = [
+    { role: "system", content: systemPrompt },
+    ...inputMessages,
+  ];
+
+  // 第一轮 LLM 调用（带工具）
+  let response = await invokeLLM({
+    messages,
+    tools: ASSISTANT_TOOLS,
+    tool_choice: "auto",
+  });
+
+  // 处理工具调用（最多 3 轮）
+  let rounds = 0;
+  while (rounds < 3) {
+    const choice = response.choices?.[0];
+    if (!choice?.message?.tool_calls?.length) break;
+
+    const toolResults: { role: "tool"; tool_call_id: string; content: string }[] = [];
+    for (const tc of choice.message.tool_calls) {
+      const args = JSON.parse(tc.function.arguments || "{}") as Record<string, unknown>;
+      const result = await executeTool(tc.function.name, args, userId);
+      toolResults.push({
+        role: "tool",
+        tool_call_id: tc.id,
+        content: JSON.stringify(result),
+      });
+    }
+
+    messages.push({
+      role: "assistant",
+      content: (choice.message.content ?? "") as string,
+    } as { role: "assistant"; content: string });
+    for (const tr of toolResults) {
+      (messages as unknown[]).push(tr);
+    }
+
+    response = await invokeLLM({
+      messages: messages as Parameters<typeof invokeLLM>[0]["messages"],
+      tools: ASSISTANT_TOOLS,
+      tool_choice: "auto",
+    });
+    rounds++;
+  }
+
+  const content = response.choices?.[0]?.message?.content ?? "抱歉，我暂时无法回答这个问题。";
+  const usage = response.usage;
+
+  return {
+    content: typeof content === "string" ? content : JSON.stringify(content),
+    usage: {
+      inputTokens: usage?.prompt_tokens ?? 0,
+      outputTokens: usage?.completion_tokens ?? 0,
+    },
+  };
+}
+
 // ─── 消息类型 ────────────────────────────────────────────────────────────────
 const messageSchema = z.object({
   role: z.enum(["user", "assistant", "system"]),
@@ -265,108 +355,266 @@ const messageSchema = z.object({
 });
 
 export const assistantRouter = router({
-  // ─── 非流式对话（用于简单问答）────────────────────────────────────────────
-  chat: protectedProcedure
+  // ─── 创建新会话 ────────────────────────────────────────────────────────────
+  createSession: protectedProcedure
     .input(
       z.object({
-        messages: z.array(messageSchema),
-        agentId: z.number().optional(), // 当前正在编辑的 Agent ID（上下文感知）
-        context: z.string().optional(), // 额外上下文（如当前页面、选中节点）
+        title: z.string().max(256).default("新对话"),
+        agentId: z.number().optional(),
+        context: z.string().optional(),
       })
     )
     .mutation(async ({ input, ctx }) => {
       const db = await getDb();
+      if (!db) throw new Error("数据库连接失败");
 
-      // 构建系统 Prompt（注入上下文）
-      let systemPrompt = SYSTEM_PROMPT;
-      if (input.agentId && db) {
-        const [agent] = await db
-          .select({ name: aiAgents.name, description: aiAgents.description, workflowJson: aiAgents.workflowJson })
-          .from(aiAgents)
-          .where(eq(aiAgents.id, input.agentId))
-          .limit(1);
-        if (agent) {
-          // eslint-disable-next-line @typescript-eslint/no-explicit-any
-          const workflow = (agent.workflowJson ?? null) as any;
-          const nodeCount = workflow?.nodes?.length ?? 0;
-          systemPrompt += `\n\n## 当前编辑的 Agent 上下文
-- **Agent 名称**: ${agent.name}
-- **描述**: ${agent.description ?? "无"}
-- **节点数量**: ${nodeCount}
-- **工作流结构**: ${nodeCount > 0 ? JSON.stringify(workflow?.nodes?.map((n: { type: string; data?: { label?: string } }) => ({ type: n.type, label: n.data?.label }))) : "空画布"}`;
-        }
-      }
-      if (input.context) {
-        systemPrompt += `\n\n## 用户当前操作上下文\n${input.context}`;
-      }
-
-      const messages: { role: "system" | "user" | "assistant"; content: string }[] = [
-        { role: "system", content: systemPrompt },
-        ...input.messages.map((m) => ({ role: m.role as "user" | "assistant", content: m.content })),
-      ];
-
-      // 第一轮 LLM 调用（带工具）
-      let response = await invokeLLM({
-        messages,
-        tools: ASSISTANT_TOOLS,
-        tool_choice: "auto",
+      const [result] = await db.insert(aiAssistantSessions).values({
+        title: input.title,
+        agentId: input.agentId ?? null,
+        context: input.context ?? null,
+        userId: ctx.user.id,
+        messageCount: 0,
       });
 
-      // 处理工具调用（最多 3 轮）
-      let rounds = 0;
-      while (rounds < 3) {
-        const choice = response.choices?.[0];
-        if (!choice?.message?.tool_calls?.length) break;
+      const sessionId = (result as { insertId: number }).insertId;
+      const [session] = await db
+        .select()
+        .from(aiAssistantSessions)
+        .where(eq(aiAssistantSessions.id, sessionId))
+        .limit(1);
 
-        // 执行所有工具调用
-        const toolResults: { role: "tool"; tool_call_id: string; content: string }[] = [];
-        for (const tc of choice.message.tool_calls) {
-          const args = JSON.parse(tc.function.arguments || "{}") as Record<string, unknown>;
-          const result = await executeTool(tc.function.name, args, ctx.user.id);
-          toolResults.push({
-            role: "tool",
-            tool_call_id: tc.id,
-            content: JSON.stringify(result) as string,
-          });
-        }
+      return session;
+    }),
 
-        // 将工具结果追加到消息列表，继续对话
-        messages.push({
-          role: "assistant",
-          content: (choice.message.content ?? "") as string,
-        } as { role: "assistant"; content: string });
-        for (const tr of toolResults) {
-          (messages as unknown[]).push(tr);
-        }
+  // ─── 列出当前用户的所有会话 ─────────────────────────────────────────────
+  listSessions: protectedProcedure
+    .input(
+      z.object({
+        limit: z.number().min(1).max(50).default(20),
+        offset: z.number().min(0).default(0),
+      })
+    )
+    .query(async ({ input, ctx }) => {
+      const db = await getDb();
+      if (!db) return { sessions: [], total: 0 };
 
-        response = await invokeLLM({
-          messages: messages as Parameters<typeof invokeLLM>[0]["messages"],
-          tools: ASSISTANT_TOOLS,
-          tool_choice: "auto",
-        });
-        rounds++;
+      const sessions = await db
+        .select()
+        .from(aiAssistantSessions)
+        .where(eq(aiAssistantSessions.userId, ctx.user.id))
+        .orderBy(desc(aiAssistantSessions.updatedAt))
+        .limit(input.limit)
+        .offset(input.offset);
+
+      return { sessions, total: sessions.length };
+    }),
+
+  // ─── 获取指定会话的消息列表 ─────────────────────────────────────────────
+  getSessionMessages: protectedProcedure
+    .input(z.object({ sessionId: z.number() }))
+    .query(async ({ input, ctx }) => {
+      const db = await getDb();
+      if (!db) return { session: null, messages: [] };
+
+      // 验证会话归属
+      const [session] = await db
+        .select()
+        .from(aiAssistantSessions)
+        .where(eq(aiAssistantSessions.id, input.sessionId))
+        .limit(1);
+
+      if (!session || session.userId !== ctx.user.id) {
+        throw new Error("会话不存在或无权访问");
       }
 
-      const content = response.choices?.[0]?.message?.content ?? "抱歉，我暂时无法回答这个问题。";
-      const usage = response.usage;
+      const messages = await db
+        .select()
+        .from(aiAssistantMessages)
+        .where(eq(aiAssistantMessages.sessionId, input.sessionId))
+        .orderBy(aiAssistantMessages.createdAt);
+
+      return { session, messages };
+    }),
+
+  // ─── 删除会话（及其所有消息）──────────────────────────────────────────────
+  deleteSession: protectedProcedure
+    .input(z.object({ sessionId: z.number() }))
+    .mutation(async ({ input, ctx }) => {
+      const db = await getDb();
+      if (!db) throw new Error("数据库连接失败");
+
+      // 验证会话归属
+      const [session] = await db
+        .select({ id: aiAssistantSessions.id, userId: aiAssistantSessions.userId })
+        .from(aiAssistantSessions)
+        .where(eq(aiAssistantSessions.id, input.sessionId))
+        .limit(1);
+
+      if (!session || session.userId !== ctx.user.id) {
+        throw new Error("会话不存在或无权访问");
+      }
+
+      // 删除所有消息
+      await db
+        .delete(aiAssistantMessages)
+        .where(eq(aiAssistantMessages.sessionId, input.sessionId));
+
+      // 删除会话
+      await db
+        .delete(aiAssistantSessions)
+        .where(eq(aiAssistantSessions.id, input.sessionId));
+
+      return { success: true };
+    }),
+
+  // ─── 更新会话标题 ─────────────────────────────────────────────────────────
+  updateSessionTitle: protectedProcedure
+    .input(z.object({ sessionId: z.number(), title: z.string().min(1).max(256) }))
+    .mutation(async ({ input, ctx }) => {
+      const db = await getDb();
+      if (!db) throw new Error("数据库连接失败");
+
+      const [session] = await db
+        .select({ id: aiAssistantSessions.id, userId: aiAssistantSessions.userId })
+        .from(aiAssistantSessions)
+        .where(eq(aiAssistantSessions.id, input.sessionId))
+        .limit(1);
+
+      if (!session || session.userId !== ctx.user.id) {
+        throw new Error("会话不存在或无权访问");
+      }
+
+      await db
+        .update(aiAssistantSessions)
+        .set({ title: input.title })
+        .where(eq(aiAssistantSessions.id, input.sessionId));
+
+      return { success: true };
+    }),
+
+  // ─── 持久化对话（发送消息 + 保存历史）─────────────────────────────────────
+  chatWithSession: protectedProcedure
+    .input(
+      z.object({
+        /** 会话 ID，不传则自动创建新会话 */
+        sessionId: z.number().optional(),
+        /** 用户发送的新消息 */
+        userMessage: z.string().min(1),
+        /** 当前正在编辑的 Agent ID（上下文感知） */
+        agentId: z.number().optional(),
+        /** 额外上下文 */
+        context: z.string().optional(),
+      })
+    )
+    .mutation(async ({ input, ctx }) => {
+      const db = await getDb();
+      if (!db) throw new Error("数据库连接失败");
+
+      let sessionId = input.sessionId;
+
+      // 如果没有传入 sessionId，自动创建新会话
+      if (!sessionId) {
+        const title = input.userMessage.slice(0, 50) + (input.userMessage.length > 50 ? "…" : "");
+        const [result] = await db.insert(aiAssistantSessions).values({
+          title,
+          agentId: input.agentId ?? null,
+          context: input.context ?? null,
+          userId: ctx.user.id,
+          messageCount: 0,
+        });
+        sessionId = (result as { insertId: number }).insertId;
+      } else {
+        // 验证会话归属
+        const [session] = await db
+          .select({ id: aiAssistantSessions.id, userId: aiAssistantSessions.userId })
+          .from(aiAssistantSessions)
+          .where(eq(aiAssistantSessions.id, sessionId))
+          .limit(1);
+
+        if (!session || session.userId !== ctx.user.id) {
+          throw new Error("会话不存在或无权访问");
+        }
+      }
+
+      // 保存用户消息
+      await db.insert(aiAssistantMessages).values({
+        sessionId,
+        role: "user",
+        content: input.userMessage,
+      });
+
+      // 加载该会话的历史消息（最近 20 条，用于上下文）
+      const historyMessages = await db
+        .select({ role: aiAssistantMessages.role, content: aiAssistantMessages.content })
+        .from(aiAssistantMessages)
+        .where(eq(aiAssistantMessages.sessionId, sessionId))
+        .orderBy(aiAssistantMessages.createdAt)
+        .limit(20);
+
+      // 构建 LLM 输入消息（仅 user/assistant 角色）
+      const llmMessages = historyMessages
+        .filter((m) => m.role === "user" || m.role === "assistant")
+        .map((m) => ({ role: m.role as "user" | "assistant", content: m.content }));
+
+      // 调用 LLM
+      const { content, usage } = await runChatCompletion(
+        llmMessages,
+        input.agentId,
+        input.context,
+        ctx.user.id
+      );
+
+      // 保存 AI 回复消息
+      await db.insert(aiAssistantMessages).values({
+        sessionId,
+        role: "assistant",
+        content,
+        inputTokens: usage.inputTokens,
+        outputTokens: usage.outputTokens,
+      });
+
+      // 更新会话元数据（消息数 + 最后预览 + 更新时间）
+      const totalMessages = historyMessages.length + 1; // +1 for assistant reply
+      const preview = content.slice(0, 100) + (content.length > 100 ? "…" : "");
+      await db
+        .update(aiAssistantSessions)
+        .set({
+          messageCount: totalMessages,
+          lastMessagePreview: preview,
+        })
+        .where(eq(aiAssistantSessions.id, sessionId));
 
       return {
+        sessionId,
         content,
-        usage: {
-          inputTokens: usage?.prompt_tokens ?? 0,
-          outputTokens: usage?.completion_tokens ?? 0,
-        },
+        usage,
       };
+    }),
+
+  // ─── 无状态对话（兼容旧接口，不保存历史）──────────────────────────────────
+  chat: protectedProcedure
+    .input(
+      z.object({
+        messages: z.array(messageSchema),
+        agentId: z.number().optional(),
+        context: z.string().optional(),
+      })
+    )
+    .mutation(async ({ input, ctx }) => {
+      const llmMessages = input.messages.map((m) => ({
+        role: m.role as "user" | "assistant",
+        content: m.content,
+      }));
+      return runChatCompletion(llmMessages, input.agentId, input.context, ctx.user.id);
     }),
 
   // ─── 获取 Agent 优化建议 ────────────────────────────────────────────────
   getAgentOptimizationTips: protectedProcedure
     .input(z.object({ agentId: z.number() }))
-    .mutation(async ({ input, ctx }) => {
+    .mutation(async ({ input }) => {
       const db = await getDb();
       if (!db) throw new Error("数据库连接失败");
 
-      // 获取 Agent 信息
       const [agent] = await db
         .select()
         .from(aiAgents)
@@ -374,7 +622,6 @@ export const assistantRouter = router({
         .limit(1);
       if (!agent) throw new Error("Agent 不存在");
 
-      // 获取最近 20 条运行记录
       const runs = await db
         .select({
           status: aiAgentRuns.status,
@@ -440,7 +687,6 @@ export const assistantRouter = router({
       const db = await getDb();
       if (!db) throw new Error("数据库连接失败");
 
-      // 获取所有活跃 Skill 列表
       const skills = await db
         .select({
           id: aiSkills.id,

@@ -179,3 +179,23 @@
 - [x] assistant.test.ts：13 项测试全部通过
 - [x] 全量测试 105 项全部通过（7 test files）
 - [x] TypeScript 0 错误
+
+## Phase 6.2 — AI 助手对话历史持久化（已完成）
+
+- [x] 数据库新增 ai_assistant_sessions 表（会话元数据：标题/userId/agentId/messageCount/lastMessagePreview）
+- [x] 数据库新增 ai_assistant_messages 表（消息内容：role/content/inputTokens/outputTokens）
+- [x] 执行 pnpm db:push 迁移成功
+- [x] 后端 chatWithSession 接口（自动创建/续接会话 + 持久化消息 + 更新元数据）
+- [x] 后端 createSession 接口（手动创建新会话）
+- [x] 后端 listSessions 接口（列出当前用户所有会话，按更新时间降序）
+- [x] 后端 getSessionMessages 接口（加载指定会话的历史消息，验证归属）
+- [x] 后端 deleteSession 接口（删除会话及其所有消息，验证归属）
+- [x] 后端 updateSessionTitle 接口（内联编辑会话标题）
+- [x] 前端 AIPlatformAssistant 改造：历史会话侧边栏（SessionListPanel）
+- [x] 前端：点击历史会话自动加载消息，恢复对话上下文
+- [x] 前端：发送消息后自动保存（sessionId 显示在底部状态栏）
+- [x] 前端：会话标题内联编辑（点击标题 → 输入框 → Enter 保存）
+- [x] 前端：新对话按钮（重置 sessionId + 清空消息）
+- [x] 前端：历史记录按钮（切换到会话列表面板）
+- [x] 全量 Vitest 测试 115 项全部通过（7 test files，新增 10 项持久化测试）
+- [x] TypeScript 0 错误

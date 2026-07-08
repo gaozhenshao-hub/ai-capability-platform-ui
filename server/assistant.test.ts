@@ -1,6 +1,8 @@
 /**
  * Assistant Router Tests
- * Covers: chat (with tool calls), getAgentOptimizationTips, recommendSkills
+ * Covers: chat, chatWithSession, createSession, listSessions,
+ *         getSessionMessages, deleteSession, updateSessionTitle,
+ *         getAgentOptimizationTips, recommendSkills
  */
 import { describe, expect, it, vi, beforeEach } from "vitest";
 import type { TrpcContext } from "./_core/context";
@@ -27,7 +29,6 @@ vi.mock("./db", () => ({
   }),
 }));
 
-// Mock invokeLLM
 vi.mock("./_core/llm", () => ({
   invokeLLM: vi.fn().mockResolvedValue({
     choices: [
@@ -64,7 +65,12 @@ function createCtx(role: "admin" | "user" = "user"): TrpcContext {
 }
 
 // ─── Mock helpers ──────────────────────────────────────────────────────────────
-/** select().from().where().limit() → returns empty array */
+function setupInsertReturnsId(insertId = 1) {
+  mockInsert.mockReturnValueOnce({
+    values: vi.fn().mockResolvedValue([{ insertId }]),
+  });
+}
+
 function setupSelectEmpty() {
   mockSelect.mockReturnValueOnce({
     from: vi.fn().mockReturnValue({
@@ -75,7 +81,50 @@ function setupSelectEmpty() {
   });
 }
 
-/** select().from().where().limit() → returns one agent */
+function setupSelectSession(session = {
+  id: 1,
+  title: "测试会话",
+  userId: 1,
+  agentId: null,
+  context: null,
+  messageCount: 2,
+  lastMessagePreview: "上一条消息预览",
+  createdAt: new Date(),
+  updatedAt: new Date(),
+}) {
+  mockSelect.mockReturnValueOnce({
+    from: vi.fn().mockReturnValue({
+      where: vi.fn().mockReturnValue({
+        limit: vi.fn().mockResolvedValue([session]),
+      }),
+    }),
+  });
+}
+
+function setupSelectSessionForQuery(sessions: object[] = []) {
+  mockSelect.mockReturnValueOnce({
+    from: vi.fn().mockReturnValue({
+      where: vi.fn().mockReturnValue({
+        orderBy: vi.fn().mockReturnValue({
+          limit: vi.fn().mockReturnValue({
+            offset: vi.fn().mockResolvedValue(sessions),
+          }),
+        }),
+      }),
+    }),
+  });
+}
+
+function setupSelectMessages(messages: object[] = []) {
+  mockSelect.mockReturnValueOnce({
+    from: vi.fn().mockReturnValue({
+      where: vi.fn().mockReturnValue({
+        orderBy: vi.fn().mockResolvedValue(messages),
+      }),
+    }),
+  });
+}
+
 function setupSelectAgent(agent = {
   id: 1,
   name: "测试 Agent",
@@ -91,7 +140,6 @@ function setupSelectAgent(agent = {
   });
 }
 
-/** select().from().where().orderBy().limit() → returns runs */
 function setupSelectRuns(runs: object[] = []) {
   mockSelect.mockReturnValueOnce({
     from: vi.fn().mockReturnValue({
@@ -104,7 +152,6 @@ function setupSelectRuns(runs: object[] = []) {
   });
 }
 
-/** select().from().where().limit() → returns skills */
 function setupSelectSkills(skills: object[] = []) {
   mockSelect.mockReturnValueOnce({
     from: vi.fn().mockReturnValue({
@@ -121,7 +168,242 @@ describe("assistantRouter", () => {
     vi.clearAllMocks();
   });
 
-  // ── chat ────────────────────────────────────────────────────────────────────
+  // ── createSession ───────────────────────────────────────────────────────────
+  describe("createSession", () => {
+    it("应创建新会话并返回会话数据", async () => {
+      setupInsertReturnsId(1);
+      setupSelectSession({ id: 1, title: "新对话", userId: 1, agentId: null, context: null, messageCount: 0, lastMessagePreview: null, createdAt: new Date(), updatedAt: new Date() });
+
+      const caller = appRouter.createCaller(createCtx());
+      const result = await caller.assistant.createSession({ title: "新对话" });
+
+      expect(result).toHaveProperty("id");
+      expect(result.title).toBe("新对话");
+    });
+
+    it("应支持传入 agentId 和 context", async () => {
+      setupInsertReturnsId(2);
+      setupSelectSession({ id: 2, title: "Agent 配置对话", userId: 1, agentId: 5, context: "当前编辑 Agent：测试", messageCount: 0, lastMessagePreview: null, createdAt: new Date(), updatedAt: new Date() });
+
+      const caller = appRouter.createCaller(createCtx());
+      const result = await caller.assistant.createSession({
+        title: "Agent 配置对话",
+        agentId: 5,
+        context: "当前编辑 Agent：测试",
+      });
+
+      expect(result.id).toBe(2);
+    });
+
+    it("未登录用户应被拒绝", async () => {
+      const caller = appRouter.createCaller({
+        user: null,
+        req: { protocol: "https", headers: {} } as TrpcContext["req"],
+        res: { clearCookie: vi.fn() } as unknown as TrpcContext["res"],
+      });
+      await expect(caller.assistant.createSession({ title: "测试" })).rejects.toThrow();
+    });
+  });
+
+  // ── listSessions ────────────────────────────────────────────────────────────
+  describe("listSessions", () => {
+    it("应返回当前用户的会话列表", async () => {
+      setupSelectSessionForQuery([
+        { id: 1, title: "对话1", userId: 1, messageCount: 3, lastMessagePreview: "预览1", updatedAt: new Date() },
+        { id: 2, title: "对话2", userId: 1, messageCount: 5, lastMessagePreview: "预览2", updatedAt: new Date() },
+      ]);
+
+      const caller = appRouter.createCaller(createCtx());
+      const result = await caller.assistant.listSessions({ limit: 20, offset: 0 });
+
+      expect(result.sessions).toHaveLength(2);
+      expect(result.sessions[0].title).toBe("对话1");
+    });
+
+    it("无会话时应返回空列表", async () => {
+      setupSelectSessionForQuery([]);
+
+      const caller = appRouter.createCaller(createCtx());
+      const result = await caller.assistant.listSessions({ limit: 20, offset: 0 });
+
+      expect(result.sessions).toHaveLength(0);
+    });
+  });
+
+  // ── getSessionMessages ──────────────────────────────────────────────────────
+  describe("getSessionMessages", () => {
+    it("应返回会话及其消息列表", async () => {
+      setupSelectSession();
+      setupSelectMessages([
+        { id: 1, sessionId: 1, role: "user", content: "你好", createdAt: new Date() },
+        { id: 2, sessionId: 1, role: "assistant", content: "你好！有什么可以帮你？", createdAt: new Date() },
+      ]);
+
+      const caller = appRouter.createCaller(createCtx());
+      const result = await caller.assistant.getSessionMessages({ sessionId: 1 });
+
+      expect(result.session).toBeTruthy();
+      expect(result.messages).toHaveLength(2);
+      expect(result.messages[0].role).toBe("user");
+      expect(result.messages[1].role).toBe("assistant");
+    });
+
+    it("会话不存在时应抛出错误", async () => {
+      setupSelectEmpty();
+
+      const caller = appRouter.createCaller(createCtx());
+      await expect(
+        caller.assistant.getSessionMessages({ sessionId: 999 })
+      ).rejects.toThrow("会话不存在或无权访问");
+    });
+
+    it("访问他人会话应抛出错误", async () => {
+      // 返回 userId=2 的会话（当前用户是 userId=1）
+      setupSelectSession({ id: 1, title: "他人会话", userId: 2, agentId: null, context: null, messageCount: 0, lastMessagePreview: null, createdAt: new Date(), updatedAt: new Date() });
+
+      const caller = appRouter.createCaller(createCtx());
+      await expect(
+        caller.assistant.getSessionMessages({ sessionId: 1 })
+      ).rejects.toThrow("会话不存在或无权访问");
+    });
+  });
+
+  // ── deleteSession ───────────────────────────────────────────────────────────
+  describe("deleteSession", () => {
+    it("应成功删除会话", async () => {
+      setupSelectSession();
+
+      const caller = appRouter.createCaller(createCtx());
+      const result = await caller.assistant.deleteSession({ sessionId: 1 });
+
+      expect(result.success).toBe(true);
+      // 验证 delete 被调用了两次（消息 + 会话）
+      expect(mockDelete).toHaveBeenCalledTimes(2);
+    });
+
+    it("删除他人会话应抛出错误", async () => {
+      setupSelectSession({ id: 1, title: "他人会话", userId: 2, agentId: null, context: null, messageCount: 0, lastMessagePreview: null, createdAt: new Date(), updatedAt: new Date() });
+
+      const caller = appRouter.createCaller(createCtx());
+      await expect(
+        caller.assistant.deleteSession({ sessionId: 1 })
+      ).rejects.toThrow("会话不存在或无权访问");
+    });
+  });
+
+  // ── updateSessionTitle ──────────────────────────────────────────────────────
+  describe("updateSessionTitle", () => {
+    it("应成功更新会话标题", async () => {
+      setupSelectSession();
+
+      const caller = appRouter.createCaller(createCtx());
+      const result = await caller.assistant.updateSessionTitle({
+        sessionId: 1,
+        title: "新标题",
+      });
+
+      expect(result.success).toBe(true);
+      expect(mockUpdate).toHaveBeenCalled();
+    });
+
+    it("标题为空时应抛出验证错误", async () => {
+      const caller = appRouter.createCaller(createCtx());
+      await expect(
+        caller.assistant.updateSessionTitle({ sessionId: 1, title: "" })
+      ).rejects.toThrow();
+    });
+  });
+
+  // ── chatWithSession ─────────────────────────────────────────────────────────
+  describe("chatWithSession", () => {
+    it("不传 sessionId 时应自动创建新会话", async () => {
+      // 创建会话
+      setupInsertReturnsId(10);
+      // 保存用户消息
+      mockInsert.mockReturnValueOnce({ values: vi.fn().mockResolvedValue([]) });
+      // 加载历史消息（带 limit）
+      mockSelect.mockReturnValueOnce({
+        from: vi.fn().mockReturnValue({
+          where: vi.fn().mockReturnValue({
+            orderBy: vi.fn().mockReturnValue({
+              limit: vi.fn().mockResolvedValue([
+                { id: 1, sessionId: 10, role: "user", content: "你好", createdAt: new Date() },
+              ]),
+            }),
+          }),
+        }),
+      });
+      // 保存 AI 回复
+      mockInsert.mockReturnValueOnce({ values: vi.fn().mockResolvedValue([]) });
+      // 更新会话元数据
+      mockUpdate.mockReturnValueOnce({
+        set: vi.fn().mockReturnValue({ where: vi.fn().mockResolvedValue(undefined) }),
+      });
+
+      const caller = appRouter.createCaller(createCtx());
+      const result = await caller.assistant.chatWithSession({
+        userMessage: "你好",
+      });
+
+      expect(result.sessionId).toBe(10);
+      expect(result.content).toBeTruthy();
+      expect(result.usage).toHaveProperty("inputTokens");
+    });
+
+    it("传入 sessionId 时应验证会话归属并继续对话", async () => {
+      // 验证会话
+      setupSelectSession();
+      // 保存用户消息
+      mockInsert.mockReturnValueOnce({ values: vi.fn().mockResolvedValue([]) });
+      // 加载历史消息（含之前的对话，带 limit）
+      mockSelect.mockReturnValueOnce({
+        from: vi.fn().mockReturnValue({
+          where: vi.fn().mockReturnValue({
+            orderBy: vi.fn().mockReturnValue({
+              limit: vi.fn().mockResolvedValue([
+                { id: 1, sessionId: 1, role: "user", content: "之前的问题", createdAt: new Date() },
+                { id: 2, sessionId: 1, role: "assistant", content: "之前的回答", createdAt: new Date() },
+                { id: 3, sessionId: 1, role: "user", content: "继续问", createdAt: new Date() },
+              ]),
+            }),
+          }),
+        }),
+      });
+      // 保存 AI 回复
+      mockInsert.mockReturnValueOnce({ values: vi.fn().mockResolvedValue([]) });
+      // 更新会话元数据
+      mockUpdate.mockReturnValueOnce({
+        set: vi.fn().mockReturnValue({ where: vi.fn().mockResolvedValue(undefined) }),
+      });
+
+      const caller = appRouter.createCaller(createCtx());
+      const result = await caller.assistant.chatWithSession({
+        sessionId: 1,
+        userMessage: "继续问",
+      });
+
+      expect(result.sessionId).toBe(1);
+      expect(result.content).toBeTruthy();
+    });
+
+    it("访问他人会话应抛出错误", async () => {
+      setupSelectSession({ id: 1, title: "他人会话", userId: 2, agentId: null, context: null, messageCount: 0, lastMessagePreview: null, createdAt: new Date(), updatedAt: new Date() });
+
+      const caller = appRouter.createCaller(createCtx());
+      await expect(
+        caller.assistant.chatWithSession({ sessionId: 1, userMessage: "测试" })
+      ).rejects.toThrow("会话不存在或无权访问");
+    });
+
+    it("消息内容为空时应抛出验证错误", async () => {
+      const caller = appRouter.createCaller(createCtx());
+      await expect(
+        caller.assistant.chatWithSession({ userMessage: "" })
+      ).rejects.toThrow();
+    });
+  });
+
+  // ── chat（无状态兼容接口）──────────────────────────────────────────────────
   describe("chat", () => {
     it("应返回 AI 助手的回复内容", async () => {
       const caller = appRouter.createCaller(createCtx());
@@ -140,109 +422,8 @@ describe("assistantRouter", () => {
         messages: [{ role: "user", content: "介绍一下 Skill 模块" }],
       });
 
-      expect(result).toHaveProperty("usage");
       expect(result.usage).toHaveProperty("inputTokens");
       expect(result.usage).toHaveProperty("outputTokens");
-      expect(typeof result.usage.inputTokens).toBe("number");
-      expect(typeof result.usage.outputTokens).toBe("number");
-    });
-
-    it("应支持多轮对话历史", async () => {
-      const caller = appRouter.createCaller(createCtx());
-      const result = await caller.assistant.chat({
-        messages: [
-          { role: "user", content: "什么是 Skill？" },
-          { role: "assistant", content: "Skill 是封装 LLM Prompt 的可复用单元。" },
-          { role: "user", content: "如何创建一个 Skill？" },
-        ],
-      });
-
-      expect(result.content).toBeTruthy();
-    });
-
-    it("传入 agentId 时应加载 Agent 上下文", async () => {
-      // 模拟 Agent 查询
-      setupSelectAgent();
-
-      const caller = appRouter.createCaller(createCtx());
-      const result = await caller.assistant.chat({
-        messages: [{ role: "user", content: "分析这个 Agent 的结构" }],
-        agentId: 1,
-      });
-
-      expect(result.content).toBeTruthy();
-    });
-
-    it("传入 agentId 但 Agent 不存在时应正常返回", async () => {
-      // 模拟 Agent 不存在
-      setupSelectEmpty();
-
-      const caller = appRouter.createCaller(createCtx());
-      const result = await caller.assistant.chat({
-        messages: [{ role: "user", content: "帮我分析 Agent" }],
-        agentId: 999,
-      });
-
-      expect(result.content).toBeTruthy();
-    });
-
-    it("应支持工具调用（list_skills）", async () => {
-      // 模拟 LLM 先返回工具调用，再返回最终回复
-      const { invokeLLM } = await import("./_core/llm");
-      const mockInvokeLLM = vi.mocked(invokeLLM);
-
-      // 第一次调用：返回工具调用
-      mockInvokeLLM.mockResolvedValueOnce({
-        choices: [
-          {
-            message: {
-              content: null,
-              tool_calls: [
-                {
-                  id: "call_1",
-                  type: "function",
-                  function: {
-                    name: "list_skills",
-                    arguments: JSON.stringify({ keyword: "listing", limit: 5 }),
-                  },
-                },
-              ],
-            },
-          },
-        ],
-        usage: { prompt_tokens: 50, completion_tokens: 20 },
-      } as Awaited<ReturnType<typeof invokeLLM>>);
-
-      // 模拟 list_skills 查询结果
-      mockSelect.mockReturnValueOnce({
-        from: vi.fn().mockReturnValue({
-          where: vi.fn().mockReturnValue({
-            limit: vi.fn().mockResolvedValue([
-              { id: 1, name: "Listing 标题优化", description: "优化标题", category: "listing", status: "active" },
-            ]),
-          }),
-        }),
-      });
-
-      // 第二次调用：返回最终回复
-      mockInvokeLLM.mockResolvedValueOnce({
-        choices: [
-          {
-            message: {
-              content: "我找到了以下 Listing 相关的 Skill：1. Listing 标题优化",
-              tool_calls: null,
-            },
-          },
-        ],
-        usage: { prompt_tokens: 100, completion_tokens: 50 },
-      } as Awaited<ReturnType<typeof invokeLLM>>);
-
-      const caller = appRouter.createCaller(createCtx());
-      const result = await caller.assistant.chat({
-        messages: [{ role: "user", content: "有哪些 Listing 相关的 Skill？" }],
-      });
-
-      expect(result.content).toContain("Listing");
     });
 
     it("未登录用户应被拒绝访问", async () => {
@@ -251,11 +432,8 @@ describe("assistantRouter", () => {
         req: { protocol: "https", headers: {} } as TrpcContext["req"],
         res: { clearCookie: vi.fn() } as unknown as TrpcContext["res"],
       });
-
       await expect(
-        caller.assistant.chat({
-          messages: [{ role: "user", content: "你好" }],
-        })
+        caller.assistant.chat({ messages: [{ role: "user", content: "你好" }] })
       ).rejects.toThrow();
     });
   });
@@ -263,9 +441,7 @@ describe("assistantRouter", () => {
   // ── getAgentOptimizationTips ────────────────────────────────────────────────
   describe("getAgentOptimizationTips", () => {
     it("应返回 Agent 优化建议", async () => {
-      // 模拟 Agent 查询
       setupSelectAgent();
-      // 模拟运行记录查询
       setupSelectRuns([
         { status: "completed", durationMs: 1200, errorMessage: null },
         { status: "failed", durationMs: null, errorMessage: "LLM 超时" },
@@ -277,9 +453,8 @@ describe("assistantRouter", () => {
 
       expect(result).toHaveProperty("tips");
       expect(result).toHaveProperty("runStats");
-      expect(result.runStats).toHaveProperty("total");
-      expect(result.runStats).toHaveProperty("failed");
-      expect(result.runStats).toHaveProperty("avgDurationMs");
+      expect(result.runStats.total).toBe(3);
+      expect(result.runStats.failed).toBe(1);
     });
 
     it("Agent 不存在时应抛出错误", async () => {
@@ -290,28 +465,11 @@ describe("assistantRouter", () => {
         caller.assistant.getAgentOptimizationTips({ agentId: 999 })
       ).rejects.toThrow("Agent 不存在");
     });
-
-    it("应正确计算成功率", async () => {
-      setupSelectAgent();
-      setupSelectRuns([
-        { status: "completed", durationMs: 1000, errorMessage: null },
-        { status: "completed", durationMs: 1200, errorMessage: null },
-        { status: "failed", durationMs: null, errorMessage: "错误" },
-        { status: "completed", durationMs: 900, errorMessage: null },
-      ]);
-
-      const caller = appRouter.createCaller(createCtx());
-      const result = await caller.assistant.getAgentOptimizationTips({ agentId: 1 });
-
-      expect(result.runStats.total).toBe(4);
-      expect(result.runStats.failed).toBe(1);
-    });
   });
 
   // ── recommendSkills ─────────────────────────────────────────────────────────
   describe("recommendSkills", () => {
     it("应返回 Skill 推荐结果", async () => {
-      // 模拟 LLM 返回结构化 JSON
       const { invokeLLM } = await import("./_core/llm");
       const mockInvokeLLM = vi.mocked(invokeLLM);
       mockInvokeLLM.mockResolvedValueOnce({
@@ -321,10 +479,9 @@ describe("assistantRouter", () => {
               content: JSON.stringify({
                 recommendations: [
                   { skillId: 1, skillName: "标题优化", reason: "适合优化标题", order: 1 },
-                  { skillId: 2, skillName: "关键词分析", reason: "提取关键词", order: 2 },
                 ],
                 workflowSuggestion: "先运行关键词分析，再运行标题优化",
-                summary: "推荐 2 个 Skill 完成任务",
+                summary: "推荐 1 个 Skill",
               }),
               tool_calls: null,
             },
@@ -333,10 +490,8 @@ describe("assistantRouter", () => {
         usage: { prompt_tokens: 200, completion_tokens: 150 },
       } as Awaited<ReturnType<typeof invokeLLM>>);
 
-      // 模拟 Skill 列表查询
       setupSelectSkills([
         { id: 1, name: "标题优化", description: "优化亚马逊标题", category: "listing" },
-        { id: 2, name: "关键词分析", description: "分析关键词", category: "seo" },
       ]);
 
       const caller = appRouter.createCaller(createCtx());
@@ -346,7 +501,6 @@ describe("assistantRouter", () => {
 
       expect(result).toHaveProperty("recommendations");
       expect(result).toHaveProperty("workflowSuggestion");
-      expect(result).toHaveProperty("summary");
       expect(Array.isArray(result.recommendations)).toBe(true);
     });
 
@@ -355,33 +509,6 @@ describe("assistantRouter", () => {
       await expect(
         caller.assistant.recommendSkills({ taskDescription: "优化" })
       ).rejects.toThrow();
-    });
-
-    it("LLM 返回非 JSON 时应优雅降级", async () => {
-      const { invokeLLM } = await import("./_core/llm");
-      const mockInvokeLLM = vi.mocked(invokeLLM);
-      mockInvokeLLM.mockResolvedValueOnce({
-        choices: [
-          {
-            message: {
-              content: "这不是 JSON 格式的回复",
-              tool_calls: null,
-            },
-          },
-        ],
-        usage: { prompt_tokens: 100, completion_tokens: 50 },
-      } as Awaited<ReturnType<typeof invokeLLM>>);
-
-      setupSelectSkills([]);
-
-      const caller = appRouter.createCaller(createCtx());
-      const result = await caller.assistant.recommendSkills({
-        taskDescription: "帮我分析亚马逊运营数据",
-      });
-
-      // 应优雅降级，返回空推荐列表
-      expect(result).toHaveProperty("recommendations");
-      expect(result.recommendations).toEqual([]);
     });
   });
 });

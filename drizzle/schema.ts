@@ -371,3 +371,43 @@ export const aiAuditLogs = mysqlTable("ai_audit_logs", {
 });
 
 export type AiAuditLog = typeof aiAuditLogs.$inferSelect;
+
+// ─── AI 助手会话表 ────────────────────────────────────────────────────────────
+export const aiAssistantSessions = mysqlTable("ai_assistant_sessions", {
+  id: int("id").autoincrement().primaryKey(),
+  /** 会话标题（首条用户消息的前 50 字） */
+  title: varchar("title", { length: 256 }).notNull().default("新对话"),
+  /** 关联的 Agent ID（上下文感知） */
+  agentId: int("agentId"),
+  /** 会话所在页面上下文描述 */
+  context: text("context"),
+  /** 消息总数（冗余字段，便于列表展示） */
+  messageCount: int("messageCount").default(0).notNull(),
+  /** 最后一条消息的摘要 */
+  lastMessagePreview: varchar("lastMessagePreview", { length: 256 }),
+  /** 会话所有者 */
+  userId: int("userId").notNull(),
+  createdAt: timestamp("createdAt").defaultNow().notNull(),
+  updatedAt: timestamp("updatedAt").defaultNow().onUpdateNow().notNull(),
+});
+export type AiAssistantSession = typeof aiAssistantSessions.$inferSelect;
+export type InsertAiAssistantSession = typeof aiAssistantSessions.$inferInsert;
+
+// ─── AI 助手消息表 ────────────────────────────────────────────────────────────
+export const aiAssistantMessages = mysqlTable("ai_assistant_messages", {
+  id: int("id").autoincrement().primaryKey(),
+  /** 所属会话 */
+  sessionId: int("sessionId").notNull(),
+  /** 消息角色 */
+  role: mysqlEnum("role", ["user", "assistant", "system"]).notNull(),
+  /** 消息内容（Markdown 文本） */
+  content: text("content").notNull(),
+  /** Token 使用量（仅 assistant 消息有值） */
+  inputTokens: int("inputTokens"),
+  outputTokens: int("outputTokens"),
+  /** 工具调用记录（JSON） */
+  toolCalls: json("toolCalls").$type<Record<string, unknown>[]>(),
+  createdAt: timestamp("createdAt").defaultNow().notNull(),
+});
+export type AiAssistantMessage = typeof aiAssistantMessages.$inferSelect;
+export type InsertAiAssistantMessage = typeof aiAssistantMessages.$inferInsert;
