@@ -63,7 +63,7 @@ export default function AppLayout({ children }: { children: React.ReactNode }) {
             <Zap className="h-8 w-8 text-violet-400" />
           </div>
           <div>
-            <h1 className="text-2xl font-bold text-white">AI 能力管理平台</h1>
+            <h1 className="text-2xl font-bold text-white">Emperor 皇帝</h1>
             <p className="mt-2 text-slate-400">请登录以继续</p>
           </div>
           <a
@@ -93,7 +93,7 @@ export default function AppLayout({ children }: { children: React.ReactNode }) {
               <div className="flex h-7 w-7 shrink-0 items-center justify-center rounded-lg bg-violet-600">
                 <Zap className="h-4 w-4 text-white" />
               </div>
-              <span className="truncate text-sm font-semibold text-white">AI 能力平台</span>
+              <span className="truncate text-sm font-semibold text-white">Emperor 皇帝</span>
             </div>
           )}
           {collapsed && (

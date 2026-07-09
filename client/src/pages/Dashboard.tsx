@@ -1,5 +1,5 @@
 /**
- * Dashboard — AI Platform Command Center
+ * Dashboard — Emperor 皇帝 控制中心
  * 真实数据驱动：Agent 运行统计 + Skill 调用趋势 + LLM 成本分析 + 知识库状态 + 系统健康
  */
 import { trpc } from "@/lib/trpc";

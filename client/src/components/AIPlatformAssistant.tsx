@@ -444,7 +444,7 @@ export function AIPlatformAssistant({ agentId, context }: AIPlatformAssistantPro
       id: "welcome",
       role: "assistant",
       content:
-        "你好！我是 **AI 能力平台助手** 🤖\n\n我可以帮你：\n- 了解平台功能和模块\n- 推荐适合任务的 Skill 组合\n- 分析 Agent 运行问题\n- 辅助配置工作流节点\n\n**对话记录已自动保存**，刷新页面后可从历史记录恢复。\n\n请问有什么我可以帮你的？",
+        "你好！我是 **Emperor 皇帝 AI 助手** 🤖\n\n我可以帮你：\n- 了解 Emperor 皇帝平台功能和模块\n- 推荐适合任务的 Skill 组合\n- 分析 Agent 运行问题\n- 辅助配置工作流节点\n\n**对话记录已自动保存**，刷新页面后可从历史记录恢复。\n\n请问有什么我可以帮你的？",
       timestamp: new Date(),
     },
   ]);

@@ -48,9 +48,9 @@ export default function Layout({ children }: { children: React.ReactNode }) {
           </div>
           <div>
             <div className="text-sm font-semibold text-white" style={{ fontFamily: "'Space Grotesk', sans-serif" }}>
-              AI Platform
+              Emperor 皇帝
             </div>
-            <div className="text-xs" style={{ color: "oklch(0.55 0.012 265)" }}>能力管理控制台</div>
+            <div className="text-xs" style={{ color: "oklch(0.55 0.012 265)" }}>AI能力中台</div>
           </div>
         </div>
 
@@ -108,7 +108,7 @@ export default function Layout({ children }: { children: React.ReactNode }) {
         <header className="flex-shrink-0 flex items-center justify-between px-6 py-3 border-b"
           style={{ background: "oklch(0.12 0.013 265)", borderColor: "oklch(0.20 0.015 265)", height: 56 }}>
           <div className="flex items-center gap-2 text-sm" style={{ color: "oklch(0.55 0.012 265)" }}>
-            <span>AI Platform</span>
+            <span>Emperor 皇帝</span>
             <ChevronRight size={12} />
             <span style={{ color: "white" }}>
               {NAV_ITEMS.find(n => n.path === "/" ? location === "/" : location.startsWith(n.path))?.label || "页面"}

@@ -105,7 +105,7 @@ export default function Projects() {
             <FolderKanban className="h-5 w-5 text-violet-400" />
             项目管理
           </h1>
-          <p className="mt-1 text-sm text-slate-400">管理 AI 能力平台的多个业务项目，每个项目独立的 API Key 和预算</p>
+          <p className="mt-1 text-sm text-slate-400">管理 Emperor 皇帝平台的多个业务项目，每个项目独立的 API Key 和预算</p>
         </div>
         <Button
           onClick={() => setShowCreateDialog(true)}
