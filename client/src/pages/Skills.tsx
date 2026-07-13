@@ -38,7 +38,17 @@ const defaultForm: SkillFormData = {
   modelId: "", temperature: "0.7", maxTokens: "2048", changeNote: "",
 };
 
-const CATEGORIES = ["文本处理", "数据分析", "代码生成", "问答系统", "内容创作", "翻译", "摘要", "分类", "其他"];
+// AMZ 全链路工具模块分组（与 Emperor 平台 category 字段对应）
+const AMZ_MODULES = [
+  { value: "all", label: "全部", short: "全部", color: "text-slate-300", bg: "bg-white/5" },
+  { value: "M1-产品开发", label: "M1 产品开发", short: "产品开发", color: "text-blue-400", bg: "bg-blue-500/10" },
+  { value: "M2-Listing工具", label: "M2 Listing工具", short: "Listing", color: "text-emerald-400", bg: "bg-emerald-500/10" },
+  { value: "M3-运营AI", label: "M3 运营AI", short: "运营AI", color: "text-violet-400", bg: "bg-violet-500/10" },
+  { value: "M4-售后服务", label: "M4 售后服务", short: "售后", color: "text-amber-400", bg: "bg-amber-500/10" },
+  { value: "M5-内容营销", label: "M5 内容营销", short: "内容营销", color: "text-pink-400", bg: "bg-pink-500/10" },
+  { value: "M0-通用分析", label: "M0 通用分析", short: "通用分析", color: "text-cyan-400", bg: "bg-cyan-500/10" },
+];
+const CATEGORIES = AMZ_MODULES.filter(m => m.value !== "all").map(m => m.value);
 const SCOPE_LABELS: Record<SkillScope, string> = { global: "全局", project: "项目", private: "私有" };
 
 function StatusBadge({ status }: { status: SkillStatus }) {
@@ -158,10 +168,14 @@ function SkillDialog({
               <div className="grid grid-cols-2 gap-4">
                 <div className="space-y-1.5">
                   <Label className="text-slate-300 text-xs">分类</Label>
-                  <Select value={form.category} onValueChange={set("category")}>
-                    <SelectTrigger className="bg-[#0a0d14] border-white/10 text-white text-sm"><SelectValue placeholder="选择分类" /></SelectTrigger>
+                  <Select value={form.category || ""} onValueChange={set("category")}>
+                    <SelectTrigger className="bg-[#0a0d14] border-white/10 text-white text-sm"><SelectValue placeholder="选择模块" /></SelectTrigger>
                     <SelectContent className="bg-[#0d1117] border-white/10">
-                      {CATEGORIES.map(c => <SelectItem key={c} value={c} className="text-slate-300">{c}</SelectItem>)}
+                      {AMZ_MODULES.filter(m => m.value !== "all").map(m => (
+                        <SelectItem key={m.value} value={m.value} className="text-slate-300">
+                          <span className={`flex items-center gap-2 ${m.color}`}>{m.label}</span>
+                        </SelectItem>
+                      ))}
                     </SelectContent>
                   </Select>
                 </div>
@@ -877,15 +891,21 @@ export default function Skills() {
                 </button>
               ))}
             </div>
-            {categories.length > 0 && (
-              <Select value={filterCategory} onValueChange={setFilterCategory}>
-                <SelectTrigger className="h-7 text-xs bg-[#0a0d14] border-white/10 text-slate-300"><SelectValue /></SelectTrigger>
-                <SelectContent className="bg-[#0d1117] border-white/10">
-                  <SelectItem value="all" className="text-slate-300 text-xs">全部分类</SelectItem>
-                  {categories.map(c => <SelectItem key={c!} value={c!} className="text-slate-300 text-xs">{c}</SelectItem>)}
-                </SelectContent>
-              </Select>
-            )}
+            <div className="flex gap-1 flex-wrap">
+              {AMZ_MODULES.map(mod => {
+                const count = mod.value === "all" ? allSkills.length : allSkills.filter(s => s.category === mod.value).length;
+                const isActive = filterCategory === mod.value;
+                return (
+                  <button key={mod.value} onClick={() => setFilterCategory(mod.value)}
+                    className={`px-2 py-0.5 rounded-full text-xs transition-colors flex items-center gap-1 ${
+                      isActive ? `${mod.bg} ${mod.color} ring-1 ring-current` : "bg-white/5 text-slate-500 hover:bg-white/10"
+                    }`}>
+                    {mod.short}
+                    <span className={`text-[10px] ${isActive ? mod.color : "text-slate-600"}`}>{count}</span>
+                  </button>
+                );
+              })}
+            </div>
           </div>
           <div className="flex-1 overflow-y-auto">
             {isLoading ? (
@@ -908,7 +928,16 @@ export default function Skills() {
                     <StatusBadge status={skill.status as SkillStatus} />
                   </div>
                   <div className="flex items-center gap-2 mt-1.5">
-                    {skill.category && <span className="text-xs text-slate-600 flex items-center gap-0.5"><Tag className="h-2.5 w-2.5" /> {skill.category}</span>}
+                    {skill.category && (() => {
+                      const mod = AMZ_MODULES.find(m => m.value === skill.category);
+                      return mod ? (
+                        <span className={`text-[10px] px-1.5 py-0.5 rounded-full ${mod.bg} ${mod.color} flex items-center gap-0.5`}>
+                          {mod.short}
+                        </span>
+                      ) : (
+                        <span className="text-xs text-slate-600 flex items-center gap-0.5"><Tag className="h-2.5 w-2.5" /> {skill.category}</span>
+                      );
+                    })()}
                     <span className="text-xs text-slate-600 flex items-center gap-0.5"><Cpu className="h-2.5 w-2.5" /> v{skill.currentVersion}</span>
                     <ChevronRight className="h-3 w-3 text-slate-700 ml-auto" />
                   </div>
