@@ -22,6 +22,7 @@ import {
   DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
 import { Tabs, TabsList, TabsTrigger } from "@/components/ui/tabs";
+import { AmzKbPanel } from "@/components/AmzKbPanel";
 
 // ─── 类型 ──────────────────────────────────────────────────────────────────────
 type KbItem = {
@@ -550,6 +551,10 @@ export default function Knowledge() {
             className="w-full border-white/10 text-slate-400 hover:text-white gap-1.5 h-7 text-xs">
             <Upload className="h-3.5 w-3.5" />上传文档
           </Button>
+        </div>
+        {/* ─── AMZ 知识库联动面板 ─── */}
+        <div className="p-3 border-t border-white/8 overflow-y-auto" style={{ maxHeight: 480 }}>
+          <AmzKbPanel />
         </div>
       </div>
 

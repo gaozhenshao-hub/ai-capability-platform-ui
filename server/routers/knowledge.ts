@@ -528,6 +528,98 @@ export const knowledgeRouter = router({
       topCollections: byCollection,
     };
   }),
+
+  // ─── AMZ 知识库代理查询（从 Emperor 层面调用 AMZ 工具 KB API）───────────────
+  getAmzKbStats: protectedProcedure.query(async () => {
+    const amzKbUrl = process.env.AMZ_KB_API_URL || "https://amzlisting-a79tkwus.manus.space";
+    const amzKbKey = process.env.AMZ_KB_API_KEY || "emperor-kb-2024";
+    try {
+      const resp = await fetch(`${amzKbUrl}/api/external/kb/stats`, {
+        headers: { Authorization: `Bearer ${amzKbKey}` },
+        signal: AbortSignal.timeout(8000),
+      });
+      if (!resp.ok) return { success: false, stats: {}, error: `HTTP ${resp.status}` };
+      const data = await resp.json() as { success: boolean; stats: Record<string, unknown> };
+      return { success: true, stats: data.stats ?? {} };
+    } catch (e: any) {
+      return { success: false, stats: {}, error: e.message };
+    }
+  }),
+
+  searchAmzKb: protectedProcedure
+    .input(z.object({
+      query: z.string().min(1),
+      type: z.enum(["product", "listing", "image", "skill", "video"]).optional(),
+      limit: z.number().min(1).max(20).default(5),
+      level: z.enum(["L1", "L2", "L3"]).default("L2"),
+    }))
+    .query(async ({ input }) => {
+      const amzKbUrl = process.env.AMZ_KB_API_URL || "https://amzlisting-a79tkwus.manus.space";
+      const amzKbKey = process.env.AMZ_KB_API_KEY || "emperor-kb-2024";
+      try {
+        const resp = await fetch(`${amzKbUrl}/api/external/kb/search`, {
+          method: "POST",
+          headers: { "Content-Type": "application/json", Authorization: `Bearer ${amzKbKey}` },
+          body: JSON.stringify({ query: input.query, types: input.type ? [input.type] : undefined, limit: input.limit, level: input.level }),
+          signal: AbortSignal.timeout(10000),
+        });
+        if (!resp.ok) return { success: false, items: [], totalScanned: 0, error: `HTTP ${resp.status}` };
+        return await resp.json();
+      } catch (e: any) {
+        return { success: false, items: [], totalScanned: 0, error: e.message };
+      }
+    }),
+
+  // ─── Emperor 知识总结 Agent（方案三）────────────────────────────────────────────────
+  summarizeAmzKb: protectedProcedure
+    .input(z.object({
+      kbType: z.enum(["product", "listing", "image", "skill", "video"]).default("listing"),
+      category: z.string().optional(),
+      limit: z.number().min(3).max(20).default(8),
+      summaryFocus: z.string().default("优秀文案的共性规律和写作技巧"),
+    }))
+    .mutation(async ({ input }) => {
+      const emperorUrl = process.env.EMPEROR_API_URL || "http://104.196.50.157:4800";
+      const emperorKey = process.env.EMPEROR_API_KEY || "dev-service-token";
+      try {
+        const resp = await fetch(`${emperorUrl}/v1/knowledge/summarize`, {
+          method: "POST",
+          headers: { "Content-Type": "application/json", Authorization: `Bearer ${emperorKey}` },
+          body: JSON.stringify(input),
+          signal: AbortSignal.timeout(90000),
+        });
+        if (!resp.ok) {
+          const errText = await resp.text().catch(() => "");
+          return { success: false, error: `Emperor API error: HTTP ${resp.status} ${errText.slice(0, 200)}` };
+        }
+        return await resp.json();
+      } catch (e: any) {
+        return { success: false, error: e.message };
+      }
+    }),
+
+  getEmperorSummaries: protectedProcedure
+    .input(z.object({
+      kbType: z.string().optional(),
+      limit: z.number().min(1).max(50).default(10),
+    }))
+    .query(async ({ input }) => {
+      const emperorUrl = process.env.EMPEROR_API_URL || "http://104.196.50.157:4800";
+      const emperorKey = process.env.EMPEROR_API_KEY || "dev-service-token";
+      try {
+        const url = new URL(`${emperorUrl}/v1/knowledge/summaries`);
+        if (input.kbType) url.searchParams.set("kbType", input.kbType);
+        url.searchParams.set("limit", String(input.limit));
+        const resp = await fetch(url.toString(), {
+          headers: { Authorization: `Bearer ${emperorKey}` },
+          signal: AbortSignal.timeout(8000),
+        });
+        if (!resp.ok) return { success: false, summaries: [], total: 0 };
+        return await resp.json();
+      } catch {
+        return { success: false, summaries: [], total: 0 };
+      }
+    }),
 });
 
 // ─── 工具函数 ─────────────────────────────────────────────────────────────────

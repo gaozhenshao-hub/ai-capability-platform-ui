@@ -211,3 +211,20 @@
 - [x] 仪表盘：新增 AI 助手统计卡片（总对话数 / 总消息数 / 总 Token）
 - [x] AI 助手组件：新增设置面板（齿轮图标 → 模型选择 + temperature + maxTokens）
 - [x] Vitest 测试覆盖新接口（124 项全部通过）
+
+## 双层知识库联动体系（已完成）
+
+### 方案一：AMZ 知识库 few-shot 注入
+- [x] AMZ 工具：创建 server/kbExternalApi.ts（4个外部 REST API 端点）
+- [x] AMZ 工具：在 server/_core/index.ts 注册 /api/external/kb 路由
+- [x] Emperor：创建 server/amz-kb-client.ts（AMZ KB 跨系统客户端）
+- [x] Emperor：改造 server/runtime/skill-engine.ts（执行 Skill 前自动注入 few-shot）
+- [x] Emperor：在 server/env.ts 添加 AMZ_KB_API_URL/AMZ_KB_API_KEY 环境变量
+
+### 方案三：Emperor 知识总结 Agent
+- [x] Emperor：创建 server/routers/knowledge.ts（知识总结 Agent 路由）
+- [x] Emperor：在 server/index.ts 注册 /v1/knowledge 路由
+- [x] Emperor：在 shared/types.ts 添加 KnowledgeSummary 类型和 PlatformStore.knowledgeSummaries 字段
+- [x] Manus 管理平台：knowledge router 新增 getAmzKbStats/searchAmzKb/summarizeAmzKb/getEmperorSummaries 接口
+- [x] Manus 管理平台：创建 client/src/components/AmzKbPanel.tsx（AMZ KB 联动面板组件）
+- [x] Manus 管理平台：Knowledge.tsx 集成 AmzKbPanel（左侧集合树底部）
