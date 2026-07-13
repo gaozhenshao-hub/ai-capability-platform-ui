@@ -116,12 +116,12 @@ export const dashboardRouter = router({
       if (!db) return [];
       const { from } = getTimeRange(input.range);
 
-      // 按天分组（使用 sql.raw 避免格式字符串被参数化）
+      // 按天/小时分组（使用 sql.raw 内联格式字符串，避免被 Drizzle 参数化为 ?）
       const groupFormat = input.range === "24h" ? "%Y-%m-%d %H:00" : "%Y-%m-%d";
-      const dateFmt = sql.raw(`'${groupFormat}'`);
+      const fmtLiteral = `'${groupFormat}'`;
       const rows = await db
         .select({
-          period: sql<string>`DATE_FORMAT(${aiSkillCalls.createdAt}, ${dateFmt})`,
+          period: sql<string>`DATE_FORMAT(${aiSkillCalls.createdAt}, ${sql.raw(fmtLiteral)})`,
           calls: count(),
           errors: sql<number>`SUM(CASE WHEN ${aiSkillCalls.errorMessage} IS NOT NULL THEN 1 ELSE 0 END)`,
           tokens: sql<number>`COALESCE(SUM(${aiSkillCalls.inputTokens} + ${aiSkillCalls.outputTokens}), 0)`,
@@ -129,8 +129,8 @@ export const dashboardRouter = router({
         })
         .from(aiSkillCalls)
         .where(gte(aiSkillCalls.createdAt, from))
-        .groupBy(sql`DATE_FORMAT(${aiSkillCalls.createdAt}, ${dateFmt})`)
-        .orderBy(sql`DATE_FORMAT(${aiSkillCalls.createdAt}, ${dateFmt})`);
+        .groupBy(sql.raw(`DATE_FORMAT(\`ai_skill_calls\`.\`createdAt\`, ${fmtLiteral})`))
+        .orderBy(sql.raw(`DATE_FORMAT(\`ai_skill_calls\`.\`createdAt\`, ${fmtLiteral})`));
 
       return rows.map(r => ({
         period: r.period,
@@ -241,17 +241,17 @@ export const dashboardRouter = router({
       if (!db) return [];
       const { from } = getTimeRange(input.range);
 
-      const auditFmt = sql.raw("'%Y-%m-%d'");
+      // 使用 sql.raw 内联格式字符串，避免被 Drizzle 参数化为 ?
       const rows = await db
         .select({
-          day: sql<string>`DATE_FORMAT(${aiAuditLogs.createdAt}, ${auditFmt})`,
+          day: sql<string>`DATE_FORMAT(${aiAuditLogs.createdAt}, '%Y-%m-%d')`,
           total: count(),
           failures: sql<number>`SUM(CASE WHEN ${aiAuditLogs.result} = 'failure' THEN 1 ELSE 0 END)`,
         })
         .from(aiAuditLogs)
         .where(gte(aiAuditLogs.createdAt, from))
-        .groupBy(sql`DATE_FORMAT(${aiAuditLogs.createdAt}, ${auditFmt})`)
-        .orderBy(sql`DATE_FORMAT(${aiAuditLogs.createdAt}, ${auditFmt})`);
+        .groupBy(sql.raw("DATE_FORMAT(`ai_audit_logs`.`createdAt`, '%Y-%m-%d')"))
+        .orderBy(sql.raw("DATE_FORMAT(`ai_audit_logs`.`createdAt`, '%Y-%m-%d')"));
 
       return rows.map(r => ({
         day: r.day,
@@ -295,18 +295,18 @@ export const dashboardRouter = router({
       if (!db) return [];
       const { from } = getTimeRange(input.range);
 
-      const costFmt = sql.raw("'%Y-%m-%d'");
+      // 使用 sql.raw 内联格式字符串，避免被 Drizzle 参数化为 ?
       const rows = await db
         .select({
-          day: sql<string>`DATE_FORMAT(${aiSkillCalls.createdAt}, ${costFmt})`,
+          day: sql<string>`DATE_FORMAT(${aiSkillCalls.createdAt}, '%Y-%m-%d')`,
           costUsd: sql<string>`COALESCE(SUM(${aiSkillCalls.costUsd}), '0')`,
           inputTokens: sql<number>`COALESCE(SUM(${aiSkillCalls.inputTokens}), 0)`,
           outputTokens: sql<number>`COALESCE(SUM(${aiSkillCalls.outputTokens}), 0)`,
         })
         .from(aiSkillCalls)
         .where(gte(aiSkillCalls.createdAt, from))
-        .groupBy(sql`DATE_FORMAT(${aiSkillCalls.createdAt}, ${costFmt})`)
-        .orderBy(sql`DATE_FORMAT(${aiSkillCalls.createdAt}, ${costFmt})`);
+        .groupBy(sql.raw("DATE_FORMAT(`ai_skill_calls`.`createdAt`, '%Y-%m-%d')"))
+        .orderBy(sql.raw("DATE_FORMAT(`ai_skill_calls`.`createdAt`, '%Y-%m-%d')"));
 
       return rows.map(r => ({
         day: r.day,
@@ -341,11 +341,10 @@ export const dashboardRouter = router({
         .from(aiAssistantMessages)
         .where(gte(aiAssistantMessages.createdAt, from));
 
-      // 按天分组的 Token 趋势
-      const trendFmt = sql.raw("'%Y-%m-%d'");
+      // 按天分组的 Token 趋势（使用 sql.raw 内联格式字符串，避免被 Drizzle 参数化为 ?）
       const trend = await db
         .select({
-          day: sql<string>`DATE_FORMAT(${aiAssistantMessages.createdAt}, ${trendFmt})`,
+          day: sql<string>`DATE_FORMAT(${aiAssistantMessages.createdAt}, '%Y-%m-%d')`,
           inputTokens: sql<number>`COALESCE(SUM(${aiAssistantMessages.inputTokens}), 0)`,
           outputTokens: sql<number>`COALESCE(SUM(${aiAssistantMessages.outputTokens}), 0)`,
           messages: count(),
@@ -355,8 +354,8 @@ export const dashboardRouter = router({
           gte(aiAssistantMessages.createdAt, from),
           eq(aiAssistantMessages.role, "assistant"),
         ))
-        .groupBy(sql`DATE_FORMAT(${aiAssistantMessages.createdAt}, ${trendFmt})`)
-        .orderBy(sql`DATE_FORMAT(${aiAssistantMessages.createdAt}, ${trendFmt})`);
+        .groupBy(sql.raw("DATE_FORMAT(`ai_assistant_messages`.`createdAt`, '%Y-%m-%d')"))
+        .orderBy(sql.raw("DATE_FORMAT(`ai_assistant_messages`.`createdAt`, '%Y-%m-%d')"));
 
       return {
         overview: {
