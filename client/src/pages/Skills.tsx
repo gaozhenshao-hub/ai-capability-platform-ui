@@ -64,7 +64,7 @@ function SkillDialog({
 }: {
   open: boolean; onClose: () => void; editId?: number;
   initialData?: Partial<SkillFormData>;
-  models: Array<{ id: number; name: string; modelId: string; provider: string }>;
+  models: Array<{ id: number; name: string; modelId: string; provider: string; isDefault?: boolean | null; status?: string }>;
 }) {
   const utils = trpc.useUtils();
   const [form, setForm] = useState<SkillFormData>({ ...defaultForm, ...initialData });
@@ -178,11 +178,23 @@ function SkillDialog({
               <div className="grid grid-cols-3 gap-4">
                 <div className="space-y-1.5">
                   <Label className="text-slate-300 text-xs">绑定模型</Label>
-                  <Select value={form.modelId} onValueChange={set("modelId")}>
-                    <SelectTrigger className="bg-[#0a0d14] border-white/10 text-white text-sm"><SelectValue placeholder="默认模型" /></SelectTrigger>
+                  <Select value={form.modelId || "default"} onValueChange={v => set("modelId")(v === "default" ? "" : v)}>
+                    <SelectTrigger className="bg-[#0a0d14] border-white/10 text-white text-sm">
+                      <SelectValue placeholder="默认模型" />
+                    </SelectTrigger>
                     <SelectContent className="bg-[#0d1117] border-white/10">
-                      <SelectItem value="default" className="text-slate-300">默认模型</SelectItem>
-                      {models.map(m => <SelectItem key={m.id} value={String(m.id)} className="text-slate-300">{m.name} ({m.provider})</SelectItem>)}
+                      <SelectItem value="default" className="text-slate-300">默认模型（系统自动选择）</SelectItem>
+                      {models.map(m => (
+                        <SelectItem key={m.id} value={String(m.id)} className="text-slate-300">
+                          <span className="flex items-center gap-2">
+                            <span className="inline-block w-2 h-2 rounded-full flex-shrink-0" style={{
+                              background: m.provider === 'openai' ? '#10b981' : m.provider === 'deepseek' ? '#6366f1' : m.provider === 'anthropic' ? '#f59e0b' : '#6b7280'
+                            }} />
+                            {m.name}
+                            {m.isDefault && <span className="text-xs text-emerald-400 ml-1">(默认)</span>}
+                          </span>
+                        </SelectItem>
+                      ))}
                     </SelectContent>
                   </Select>
                 </div>
