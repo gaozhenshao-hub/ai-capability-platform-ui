@@ -850,6 +850,77 @@ export const skillsRouter = router({
       };
     }),
 
+  // ─── Emperor Sync API: 供云电脑 Emperor 引擎拉取所有 active Skill ──────────────
+  // 使用 API Key 鉴权（X-Emperor-Sync-Key header），无需 Manus OAuth
+  syncForEmperor: publicProcedure
+    .input(
+      z.object({
+        apiKey: z.string(),
+        updatedAfter: z.number().optional(), // Unix timestamp ms，只拉取此时间之后更新的
+      })
+    )
+    .query(async ({ input }) => {
+      // 简单 API Key 鉴权（存在环境变量 EMPEROR_SYNC_KEY 中）
+      const expectedKey = process.env.EMPEROR_SYNC_KEY || "emperor-sync-2024";
+      if (input.apiKey !== expectedKey) {
+        throw new Error("Unauthorized: invalid sync key");
+      }
+
+      const db = await getDb();
+      if (!db) return { skills: [], syncedAt: Date.now() };
+
+      const conditions = [eq(aiSkills.status, "active")];
+
+      const skills = await db
+        .select({
+          id: aiSkills.id,
+          slug: aiSkills.slug,
+          name: aiSkills.name,
+          description: aiSkills.description,
+          category: aiSkills.category,
+          scope: aiSkills.scope,
+          systemPrompt: aiSkills.systemPrompt,
+          promptTemplate: aiSkills.promptTemplate,
+          inputSchema: aiSkills.inputSchema,
+          outputSchema: aiSkills.outputSchema,
+          currentVersion: aiSkills.currentVersion,
+          updatedAt: aiSkills.updatedAt,
+          modelId: aiSkills.modelId,
+        })
+        .from(aiSkills)
+        .where(and(...conditions))
+        .orderBy(aiSkills.slug);
+
+      // 获取每个 Skill 绑定的模型 modelId
+      const modelIds = Array.from(new Set(skills.map((s) => s.modelId).filter((id): id is number => id !== null && id !== undefined)));
+      let modelMap: Record<number, string> = {};
+      if (modelIds.length > 0) {
+        const models = await db
+          .select({ id: aiLlmModels.id, modelId: aiLlmModels.modelId })
+          .from(aiLlmModels)
+          .where(eq(aiLlmModels.status, "active"));
+        modelMap = Object.fromEntries(models.map((m) => [m.id, m.modelId]));
+      }
+
+      return {
+        skills: skills.map((s) => ({
+          slug: s.slug,
+          name: s.name,
+          description: s.description,
+          category: s.category,
+          systemPrompt: s.systemPrompt || "",
+          promptTemplate: s.promptTemplate,
+          inputSchema: s.inputSchema,
+          outputSchema: s.outputSchema,
+          version: s.currentVersion,
+          modelPolicy: s.modelId ? modelMap[s.modelId] || "deepseek-chat" : "deepseek-chat",
+          updatedAt: s.updatedAt?.getTime() ?? Date.now(),
+        })),
+        total: skills.length,
+        syncedAt: Date.now(),
+      };
+    }),
+
   // Get available LLM models for selector
   getAvailableModels: protectedProcedure.query(async () => {
     const db = await getDb();
